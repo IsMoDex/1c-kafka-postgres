@@ -6,10 +6,6 @@
 
 COMPOSE ?= docker compose
 
-# Значения БД берутся из окружения (.env), с дефолтами как в .env.example.
-PG_USER ?= $(or $(POSTGRES_USER),integration)
-PG_DB   ?= $(or $(POSTGRES_DB),integration)
-
 .DEFAULT_GOAL := help
 
 .PHONY: help up down restart build logs ps topics psql \
@@ -57,10 +53,10 @@ demo-delete: ## Пометить контрагента удалённым в mo
 
 # ── Проверки ─────────────────────────────────────────────────────────────────
 psql: ## Открыть psql в контейнере postgres
-	$(COMPOSE) exec postgres psql -U "$(PG_USER)" -d "$(PG_DB)"
+	$(COMPOSE) exec postgres sh -lc 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
 
 verify: ## Показать содержимое таблиц (проверочные запросы)
-	$(COMPOSE) exec -T postgres psql -U "$(PG_USER)" -d "$(PG_DB)" -f - < sql/verify.sql
+	$(COMPOSE) exec -T postgres sh -lc 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -f -' < sql/verify.sql
 
 health: ## Проверить /health consumer-service
 	@curl -s http://localhost:8081/health || echo "consumer недоступен"

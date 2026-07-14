@@ -172,23 +172,28 @@ class Worker:
             except Exception as exc:  # noqa: BLE001 — невалидное сообщение → DLQ
                 poison.append((msg, f"parse_error: {exc}"))
 
-        # ядовитые сообщения — сразу в DLQ (не блокируют батч).
-        # Если DLQ-доставка не удалась, offset такого сообщения НЕ коммитим:
-        # исключаем его из батча-для-commit, чтобы не потерять при следующем poll.
-        committable = list(batch)
+        # Ядовитые сообщения — сразу в DLQ. Если хотя бы одна DLQ-доставка не
+        # подтверждена, НЕ пишем остальные rows и НЕ коммитим batch целиком.
+        # Иначе commit более позднего offset той же партиции перескочит через
+        # проблемное сообщение и нарушит at-least-once.
+        dlq_failed = False
         for msg, reason in poison:
             if self._dlq.send(msg.topic(), msg.key(), msg.value(), reason):
                 self._health.messages_dlq += 1
                 self._health.last_error = reason
             else:
-                # не подтверждено брокером — не коммитим этот offset
-                committable.remove(msg)
+                dlq_failed = True
+
+        if dlq_failed:
+            self._health.last_error = "DLQ delivery failed; batch will be retried"
+            log.error("batch_not_committed_due_to_dlq_failure", messages=len(batch))
+            return
 
         if ownership_rows or counterparty_rows:
-            self._write_with_retry(committable, ownership_rows, counterparty_rows)
-        elif committable:
-            # только poison (успешно отправленный в DLQ) — коммитим, чтобы не зациклиться
-            self._commit(committable)
+            self._write_with_retry(batch, ownership_rows, counterparty_rows)
+        elif batch:
+            # Только poison, весь DLQ подтверждён — коммитим, чтобы не зациклиться.
+            self._commit(batch)
 
     def _write_with_retry(self, batch: list, of_rows: list[dict], cp_rows: list[dict]) -> None:
         attempt = 0
@@ -212,19 +217,23 @@ class Worker:
                 self._health.last_error = str(exc)
                 log.error("batch_write_failed", attempt=attempt, error=str(exc))
                 if attempt > self._cfg.max_retries:
-                    # исчерпали попытки — весь батч в DLQ по соответствующим топикам.
-                    # Коммитим только те сообщения, что брокер подтвердил в DLQ.
+                    # Исчерпали попытки — весь батч в DLQ. Offset-ы коммитим
+                    # только если брокер подтвердил ВСЕ сообщения: частичный
+                    # commit может перескочить через gap внутри партиции.
                     log.error("batch_exhausted_retries", messages=len(batch))
-                    committable = []
+                    all_delivered = True
                     for msg in batch:
                         if self._dlq.send(
                             msg.topic(), msg.key(), msg.value(),
                             f"db_write_failed_after_retries: {exc}",
                         ):
                             self._health.messages_dlq += 1
-                            committable.append(msg)
-                    if committable:
-                        self._commit(committable)
+                        else:
+                            all_delivered = False
+                    if all_delivered:
+                        self._commit(batch)
+                    else:
+                        log.error("batch_not_committed_due_to_dlq_failure", messages=len(batch))
                     return
                 time.sleep(min(2 ** attempt, 30))
 

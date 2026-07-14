@@ -21,6 +21,6 @@ mock_state.json
 .DS_Store
 Thumbs.db
 
-# 1С временные (сохраняем configuration.dt / .cf вручную)
+# 1С временные (актуальный configuration.cf сохраняется вручную)
 1c/*.1CD
 1c/cache/
