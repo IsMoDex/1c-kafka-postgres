@@ -24,3 +24,8 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: tests against the live 1C, Kafka, consumer-service, and PostgreSQL stack",
+]

@@ -16,7 +16,8 @@ param(
     [Parameter(Position = 0)]
     [ValidateSet('up','down','restart','build','logs','ps','topics','psql',
                  'sync-full','sync-incremental','demo-touch','demo-delete',
-                 'verify','health','onec-check','test','clean','reset','help')]
+                 'verify','health','onec-check','test','test-integration',
+                 'clean','reset','help')]
     [string]$Command = 'help',
 
     [string]$Id,
@@ -59,14 +60,18 @@ switch ($Command) {
     'health'  { try { (Invoke-WebRequest -Uri 'http://localhost:8081/health' -UseBasicParsing).Content } catch { 'consumer unavailable' } }
     'onec-check' { Invoke-Compose "exec integration-service python -c ""import os,httpx; u=os.environ['ONEC_BASE_URL']; r=httpx.get(u+'/ownership-forms',timeout=30); print('URL:',u); print('HTTP',r.status_code); print(r.text[:200])""" }
     'test' {
-        Invoke-Compose 'exec integration-service python -m pytest -q'
+        Invoke-Compose 'exec integration-service python -m pytest -q -m "not integration"'
         Invoke-Compose 'exec consumer-service python -m pytest -q'
+    }
+    'test-integration' {
+        Invoke-Compose 'exec integration-service python -m pytest -q -m integration'
     }
     'clean'   { Invoke-Compose 'down --remove-orphans' }
     'reset'   { Invoke-Compose 'down -v --remove-orphans' }
     default {
         Write-Host 'Commands: up, down, restart, build, logs, ps, topics, psql,'
         Write-Host '          sync-full, sync-incremental, demo-touch, demo-delete,'
-        Write-Host '          verify, health, onec-check, test, clean, reset'
+        Write-Host '          verify, health, onec-check, test, test-integration,'
+        Write-Host '          clean, reset'
     }
 }

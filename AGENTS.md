@@ -324,6 +324,9 @@ consumer restarts=0, DLQ пуст.
 - HTTP 1С получил retry/backoff и limit/offset pagination; обновлённая
   конфигурация загружена в ИБ и выгружена в `configuration.cf`.
 - Итоговый набор тестов: integration 14 + consumer 18 = 32.
+- Добавлен отдельный живой pytest integration suite (`make test-integration`):
+  реальная 1С → Kafka → consumer → PostgreSQL; unit/component тесты запускаются
+  отдельно через `make test`.
 
 ---
 

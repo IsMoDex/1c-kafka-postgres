@@ -10,11 +10,14 @@ COMPOSE ?= docker compose
 
 .PHONY: help up down restart build logs ps topics psql \
         sync-full sync-incremental demo-touch demo-delete \
-        verify clean reset health onec-check test
+        verify clean reset health onec-check test test-integration
 
 help: ## Показать список команд
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
+	@echo Available commands:
+	@echo   up, down, restart, build, logs, ps, topics, psql
+	@echo   sync-full, sync-incremental, demo-touch, demo-delete
+	@echo   verify, health, onec-check, test, test-integration
+	@echo   clean, reset
 
 up: ## Поднять инфраструктуру (postgres, kafka, consumer, kafka-ui) + миграции + топики
 	$(COMPOSE) up -d --build
@@ -64,9 +67,12 @@ health: ## Проверить /health consumer-service
 onec-check: ## Проверить доступность HTTP-сервиса 1С из контейнера (ONEC_BASE_URL)
 	$(COMPOSE) exec integration-service python -c "import os,httpx; u=os.environ['ONEC_BASE_URL']; r=httpx.get(u+'/ownership-forms',timeout=30); print('URL:',u); print('HTTP',r.status_code); print(r.text[:200])"
 
-test: ## Запустить unit-тесты сервисов (pytest в контейнерах)
-	$(COMPOSE) exec integration-service python -m pytest -q
+test: ## Запустить unit/component тесты сервисов (без живого контура)
+	$(COMPOSE) exec integration-service python -m pytest -q -m "not integration"
 	$(COMPOSE) exec consumer-service python -m pytest -q
+
+test-integration: ## Проверить живой контур 1С → Kafka → consumer → PostgreSQL
+	$(COMPOSE) exec integration-service python -m pytest -q -m integration
 
 # ── Очистка ──────────────────────────────────────────────────────────────────
 clean: ## Остановить и удалить контейнеры + сети
