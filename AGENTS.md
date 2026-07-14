@@ -49,7 +49,9 @@ upsert и мягким удалением.
 ```
 
 - **1С** запускается **вне Docker** (нативно на Windows) — разрешено ТЗ. Сервисы
-  обращаются к ней через `host.docker.internal`.
+  обращаются к ней по **реальному IPv4-адресу хоста** (адаптер vEthernet WSL,
+  напр. `172.23.128.1`), а НЕ через `host.docker.internal` — Docker Desktop не
+  проксирует ISAPI-ответ 1С и отдаёт 502 (см. раздел «Реальная 1С» ниже).
 - **integration-service** — CLI-приложение (не демон). Запускается разово в режиме
   `full` или `incremental`, читает источник, публикует события, завершается.
 - **consumer-service** — долгоживущий демон. Слушает топики, пишет в PostgreSQL.
@@ -273,6 +275,38 @@ full → 4 формы + 5 контрагентов; повторный full → 
 → обновление; `/delete`+incremental → `deleted=true` (инкремент забрал 1 запись);
 consumer restarts=0, DLQ пуст.
 
+### Аудит и доработки (2026-07-14)
+Пройден внешний аудит (30 замечаний). Внесены правки:
+- **producer.flush()**: `remaining>0` теперь считается ошибкой доставки —
+  incremental не двигает watermark при недоставке в Kafka (защита от потери данных).
+- **ONEC_BASE_URL**: убран нерабочий дефолт `host.docker.internal` из
+  `.env.example`, `docker-compose.yml`, `config.py` → placeholder `<HOST_IPV4>`.
+- **consumer DLQ**: `DlqProducer.send()` дожидается подтверждения доставки и
+  возвращает bool; offset коммитится только для подтверждённых в DLQ сообщений.
+- **health**: добавлены `kafka_ok`, `last_kafka_error`, разделены
+  `rows_processed`/`messages_processed`; healthy() учитывает Kafka.
+- **consumer `--help`**: argparse, не поднимает порт при `--help`.
+- **Makefile/make.ps1**: `psql`/`verify` используют `POSTGRES_USER/DB` из env;
+  добавлены `onec-check` и `test`.
+- **BSL (1С)**: `ПараметрChangedSince` без параметра → `Неопределено` (full без
+  фильтра); `ISOВДату` — устойчивый парс RFC3339 (первые 14 цифр); `inn/kpp`
+  пустые строки → `null` (единообразие с mock).
+- **unit-тесты**: integration (mock/event, 10) + consumer (parse_event, 5) = 15,
+  все проходят (`make test`).
+- **docs/README/AGENTS**: `configuration.dt`→`.cf`; версия 1С «8.3+ (реализовано
+  на 8.5.1.1302)»; основной demo — на реальной 1С, mock как fallback; убрано
+  устаревшее про `host.docker.internal`; в limitations добавлены seed create-only,
+  fallback GUID формы, версия 8.5, сеть Docker.
+- **04_postgresql-data.txt**: пересоздан в корректном UTF-8 (без mojibake).
+
+Осознанно НЕ реализовано (аргументировано):
+- **#18** (изоляция отдельных сообщений при FK-конфликте вместо всего батча) —
+  в текущей модели порядок FK гарантирован (формы раньше контрагентов), конфликт
+  не возникает; усложнение не оправдано для демо-контура.
+- **#21** (CHECK-ограничения inn/kpp в БД) — ТЗ не требует; интеграционная БД
+  должна принимать данные как есть из 1С, жёсткая валидация на приёмнике может
+  ронять легитимные записи. Валидация — задача источника.
+
 ---
 
 ## 10. Договорённости по окружению
@@ -296,4 +330,4 @@ consumer restarts=0, DLQ пуст.
 
 Обязательные артефакты сдачи (раздел 12 ТЗ): `docker-compose.yml`, `README.md`,
 `.env.example`, `migrations/`, `integration-service/`, `consumer-service/`, `sql/`,
-`docs/`, `1c/` (configuration.dt + screenshots/ + setup.md).
+`docs/`, `1c/` (configuration.cf + src/ + screenshots/ + setup.md).

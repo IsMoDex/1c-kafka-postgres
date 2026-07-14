@@ -13,8 +13,9 @@ WORKDIR /app
 
 COPY pyproject.toml ./
 COPY src ./src
+COPY tests ./tests
 
-RUN pip install --upgrade pip && pip install .
+RUN pip install --upgrade pip && pip install ".[test]"
 
 EXPOSE 8081
 

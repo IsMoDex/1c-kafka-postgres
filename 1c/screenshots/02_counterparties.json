@@ -7,14 +7,14 @@
 "kpp": "770101001",
 "ownership_form_id": "ooo",
 "deleted": false,
-"updated_at": "2026-07-14T04:00:59Z"
+"updated_at": "2026-07-14T07:14:13Z"
 },
 {
 "id": "bf01dbd6-7f37-11f1-aa4f-803049708148",
 "code": "000002",
 "name": "ИП Иванов И.И.",
 "inn": "770212345678",
-"kpp": "",
+"kpp": null,
 "ownership_form_id": "ip",
 "deleted": false,
 "updated_at": "2026-07-14T03:54:44Z"
@@ -47,6 +47,6 @@
 "kpp": "500101001",
 "ownership_form_id": "ooo",
 "deleted": true,
-"updated_at": "2026-07-14T04:01:20Z"
+"updated_at": "2026-07-14T07:14:34Z"
 }
 ]

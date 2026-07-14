@@ -14,8 +14,9 @@ WORKDIR /app
 
 COPY pyproject.toml ./
 COPY src ./src
+COPY tests ./tests
 
-RUN pip install --upgrade pip && pip install .
+RUN pip install --upgrade pip && pip install ".[test]"
 
 # состояние mock-источника (volume в compose при необходимости)
 RUN mkdir -p /data

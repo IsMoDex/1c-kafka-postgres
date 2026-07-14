@@ -31,19 +31,57 @@ class DlqProducer:
     def __init__(self, bootstrap_servers: str, suffix: str) -> None:
         self._suffix = suffix
         self._producer = Producer(
-            {"bootstrap.servers": bootstrap_servers, "acks": "all", "client.id": "consumer-dlq"}
+            {
+                "bootstrap.servers": bootstrap_servers,
+                "acks": "all",
+                "enable.idempotence": True,
+                "retries": 5,
+                "client.id": "consumer-dlq",
+            }
         )
 
-    def send(self, source_topic: str, key: Optional[bytes], value: Optional[bytes], reason: str) -> None:
+    def send(
+        self, source_topic: str, key: Optional[bytes], value: Optional[bytes], reason: str
+    ) -> bool:
+        """Отправляет сообщение в DLQ и ДОЖИДАЕТСЯ подтверждения доставки.
+
+        Возвращает True только если брокер подтвердил запись. При ошибке или
+        таймауте возвращает False — вызывающий код НЕ должен коммитить offset
+        такого сообщения, иначе poison-сообщение будет потеряно.
+        """
         dlq_topic = f"{source_topic}{self._suffix}"
-        self._producer.produce(
-            topic=dlq_topic,
-            key=key,
-            value=value,
-            headers={"dlq_reason": reason[:512]},
-        )
-        self._producer.flush(10)
+        delivered = {"ok": False, "err": None}
+
+        def _on_delivery(err, _msg) -> None:
+            if err is None:
+                delivered["ok"] = True
+            else:
+                delivered["err"] = str(err)
+
+        try:
+            self._producer.produce(
+                topic=dlq_topic,
+                key=key,
+                value=value,
+                headers={"dlq_reason": reason[:512]},
+                on_delivery=_on_delivery,
+            )
+            remaining = self._producer.flush(10)
+        except (BufferError, KafkaException) as exc:
+            log.error("dlq_produce_failed", topic=dlq_topic, error=str(exc))
+            return False
+
+        if remaining > 0 or not delivered["ok"]:
+            log.error(
+                "dlq_delivery_failed",
+                topic=dlq_topic,
+                remaining=remaining,
+                error=delivered["err"],
+            )
+            return False
+
         log.warning("sent_to_dlq", topic=dlq_topic, reason=reason)
+        return True
 
 
 class Worker:
@@ -73,6 +111,7 @@ class Worker:
     def run(self) -> None:
         self._consumer.subscribe(self._cfg.topics)
         self._health.ready = True
+        self._health.kafka_ok = True
         log.info("consumer_started", topics=self._cfg.topics, group=self._cfg.consumer_group)
 
         try:
@@ -104,11 +143,16 @@ class Worker:
                 # Транзиентные ошибки (топик ещё не прогрузился брокером,
                 # ребаланс и т.п.) — логируем и продолжаем, не роняя сервис.
                 if err.retriable() or err.code() == KafkaError.UNKNOWN_TOPIC_OR_PART:
+                    self._health.kafka_ok = False
+                    self._health.last_kafka_error = str(err)
                     log.warning("kafka_transient_error", error=str(err), code=err.code())
                     time.sleep(1.0)
                     continue
+                self._health.kafka_ok = False
+                self._health.last_kafka_error = str(err)
                 log.error("kafka_consume_error", error=str(err))
                 raise KafkaException(err)
+            self._health.kafka_ok = True
             batch.append(msg)
         return batch
 
@@ -128,17 +172,23 @@ class Worker:
             except Exception as exc:  # noqa: BLE001 — невалидное сообщение → DLQ
                 poison.append((msg, f"parse_error: {exc}"))
 
-        # ядовитые сообщения — сразу в DLQ (не блокируют батч)
+        # ядовитые сообщения — сразу в DLQ (не блокируют батч).
+        # Если DLQ-доставка не удалась, offset такого сообщения НЕ коммитим:
+        # исключаем его из батча-для-commit, чтобы не потерять при следующем poll.
+        committable = list(batch)
         for msg, reason in poison:
-            self._dlq.send(msg.topic(), msg.key(), msg.value(), reason)
-            self._health.messages_dlq += 1
-            self._health.last_error = reason
+            if self._dlq.send(msg.topic(), msg.key(), msg.value(), reason):
+                self._health.messages_dlq += 1
+                self._health.last_error = reason
+            else:
+                # не подтверждено брокером — не коммитим этот offset
+                committable.remove(msg)
 
         if ownership_rows or counterparty_rows:
-            self._write_with_retry(batch, ownership_rows, counterparty_rows)
-        else:
-            # только poison — коммитим offset'ы, чтобы не зациклиться
-            self._commit(batch)
+            self._write_with_retry(committable, ownership_rows, counterparty_rows)
+        elif committable:
+            # только poison (успешно отправленный в DLQ) — коммитим, чтобы не зациклиться
+            self._commit(committable)
 
     def _write_with_retry(self, batch: list, of_rows: list[dict], cp_rows: list[dict]) -> None:
         attempt = 0
@@ -147,7 +197,8 @@ class Worker:
             try:
                 self._db.apply_batch(of_rows, cp_rows)
                 self._health.db_ok = True
-                self._health.messages_processed += len(of_rows) + len(cp_rows)
+                self._health.rows_processed += len(of_rows) + len(cp_rows)
+                self._health.messages_processed += len(batch)
                 self._commit(batch)
                 log.info(
                     "batch_committed",
@@ -161,15 +212,19 @@ class Worker:
                 self._health.last_error = str(exc)
                 log.error("batch_write_failed", attempt=attempt, error=str(exc))
                 if attempt > self._cfg.max_retries:
-                    # исчерпали попытки — весь батч в DLQ по соответствующим топикам
+                    # исчерпали попытки — весь батч в DLQ по соответствующим топикам.
+                    # Коммитим только те сообщения, что брокер подтвердил в DLQ.
                     log.error("batch_exhausted_retries", messages=len(batch))
+                    committable = []
                     for msg in batch:
-                        self._dlq.send(
+                        if self._dlq.send(
                             msg.topic(), msg.key(), msg.value(),
                             f"db_write_failed_after_retries: {exc}",
-                        )
-                        self._health.messages_dlq += 1
-                    self._commit(batch)
+                        ):
+                            self._health.messages_dlq += 1
+                            committable.append(msg)
+                    if committable:
+                        self._commit(committable)
                     return
                 time.sleep(min(2 ** attempt, 30))
 

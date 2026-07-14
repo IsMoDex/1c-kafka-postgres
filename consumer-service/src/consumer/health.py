@@ -16,21 +16,27 @@ class HealthState:
     def __init__(self) -> None:
         self.ready = False
         self.db_ok = False
-        self.messages_processed = 0
+        self.kafka_ok = False
+        self.rows_processed = 0          # применённых строк upsert
+        self.messages_processed = 0      # обработанных Kafka-сообщений
         self.messages_dlq = 0
         self.last_error: str | None = None
+        self.last_kafka_error: str | None = None
 
     def snapshot(self) -> dict:
         return {
             "ready": self.ready,
             "db_ok": self.db_ok,
+            "kafka_ok": self.kafka_ok,
+            "rows_processed": self.rows_processed,
             "messages_processed": self.messages_processed,
             "messages_dlq": self.messages_dlq,
             "last_error": self.last_error,
+            "last_kafka_error": self.last_kafka_error,
         }
 
     def healthy(self) -> bool:
-        return self.ready and self.db_ok
+        return self.ready and self.db_ok and self.kafka_ok
 
 
 def start_health_server(port: int, state: HealthState) -> ThreadingHTTPServer:

@@ -32,11 +32,25 @@
 
 ## Быстрый старт
 
+Проект поддерживает два источника данных (переключение — `SOURCE_TYPE` в `.env`):
+
+**Вариант A — реальная 1С (приоритет ТЗ):**
 ```bash
-cp .env.example .env          # при необходимости отредактировать
-make up                        # поднять postgres, kafka, consumer, kafka-ui + миграции + топики
-make sync-full                 # полная синхронизация (источник по умолчанию — mock)
-make verify                    # посмотреть данные в PostgreSQL
+cp .env.example .env
+# в .env: SOURCE_TYPE=onec и ONEC_BASE_URL=http://<IP-хоста>/roshim/hs/integration
+# подготовка 1С (база, конфигурация, HTTP-сервис, публикация в IIS) — см. 1c/setup.md
+make up
+make onec-check                # проверить доступность 1С из контейнера
+make sync-full                 # 1С → Kafka → PostgreSQL
+make verify
+```
+
+**Вариант B — mock-источник (fallback для демо/CI без 1С):**
+```bash
+cp .env.example .env           # SOURCE_TYPE=mock (значение по умолчанию)
+make up
+make sync-full                 # mock → Kafka → PostgreSQL
+make verify
 ```
 
 Kafka UI: <http://localhost:8080> · Consumer health: <http://localhost:8081/health>
@@ -49,7 +63,7 @@ Kafka UI: <http://localhost:8080> · Consumer health: <http://localhost:8081/hea
 
 | Компонент | Роль |
 |---|---|
-| **1С 8.3** | Источник справочных данных (HTTP-сервис или OData). Запускается вне Docker. |
+| **1С 8.3+** (реализовано на 8.5.1.1302) | Источник справочных данных (собственный HTTP-сервис). Запускается вне Docker. |
 | **integration-service** | Producer: читает 1С, публикует события в Kafka. CLI (`full`/`incremental`). |
 | **Kafka (KRaft)** | Шина данных. Топики `1c.ownership_forms.v1`, `1c.counterparties.v1` + `.dlq`. |
 | **consumer-service** | Consumer: читает Kafka, делает upsert в PostgreSQL. Демон. |
@@ -203,31 +217,56 @@ SELECT id, code, name, inn, ownership_form_id, deleted FROM counterparties ORDER
 
 ## Демонстрационный сценарий
 
-Полный сценарий из раздела 11 ТЗ (на mock-источнике):
+Полный сценарий раздела 11 ТЗ. Приоритетный вариант — **на реальной 1С**.
+
+### Основной: реальная 1С
+
+Предполагается подготовленная 1С (см. [`1c/setup.md`](1c/setup.md)),
+`SOURCE_TYPE=onec` и корректный `ONEC_BASE_URL` в `.env`. `$B` — базовый URL 1С,
+например `http://172.23.128.1/roshim/hs/integration`.
 
 ```bash
-# 1) Инфраструктура
 make up
+make onec-check                              # 1С доступна из контейнера
 
-# 2) Полная синхронизация: 4 формы + 5 контрагентов → Kafka → PostgreSQL
+# 1) данные в 1С: 4 формы + 5 контрагентов (идемпотентный POST /seed)
+curl -X POST $B/seed
+
+# 2) полная синхронизация: 1С → Kafka → PostgreSQL
 make sync-full
-make verify                     # в PostgreSQL появились записи
+make verify                                  # в PostgreSQL 4 формы + 5 контрагентов
 
-# 3) Повторная полная синхронизация — дублей нет
+# 3) повторная полная синхронизация — дублей нет
 make sync-full
-make verify                     # count не вырос
+make verify                                  # count не вырос
 
-# 4) Изменение одного контрагента (обновляет updated_at в mock)
+# 4) изменить контрагента прямо в 1С
+curl -X POST "$B/touch?id=<guid>&name=ООО Ромашка (обновлено)"
+
+# 5) инкрементальная синхронизация → обновление записи
+make sync-incremental
+make verify                                  # name обновился, дублей нет
+
+# 6) пометить контрагента на удаление в 1С
+curl -X POST "$B/delete?id=<guid>"
+make sync-incremental
+make verify                                  # deleted = true; инкремент забрал 1 запись
+```
+
+> GUID контрагента можно взять из `curl $B/counterparties`.
+
+### Fallback: mock-источник (без 1С, для демо/CI)
+
+При `SOURCE_TYPE=mock` те же шаги выполняются встроенными помощниками:
+
+```bash
+make up
+make sync-full && make verify
+make sync-full && make verify                 # без дублей
 make demo-touch ID=b7e2a1f0-3b5d-4a1d-8d5a-1d6c8c1a0001 NAME="ООО Ромашка (обновлено)"
-
-# 5) Инкрементальная синхронизация → обновление существующей записи
-make sync-incremental
-make verify                     # name контрагента обновился, дублей нет
-
-# 6) Пометка удаления контрагента
+make sync-incremental && make verify          # обновление
 make demo-delete ID=b7e2a1f0-3b5d-4a1d-8d5a-1d6c8c1a0005
-make sync-incremental
-make verify                     # у контрагента deleted = true
+make sync-incremental && make verify          # deleted = true
 ```
 
 На Windows замените `make <cmd>` на `./make.ps1 <cmd>` (для demo — с `-Id`/`-Name`).
@@ -314,7 +353,7 @@ Copy-Item .env.example .env
 ├── docs/                   # architecture, event-format, decisions, limitations
 ├── integration-service/    # producer (Python)
 ├── consumer-service/       # consumer (Python)
-└── 1c/                     # setup.md, configuration.dt, screenshots/
+└── 1c/                     # setup.md, configuration.cf, src/ (XML+BSL), screenshots/
 ```
 
 ---

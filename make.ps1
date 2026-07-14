@@ -16,7 +16,7 @@ param(
     [Parameter(Position = 0)]
     [ValidateSet('up','down','restart','build','logs','ps','topics','psql',
                  'sync-full','sync-incremental','demo-touch','demo-delete',
-                 'verify','health','clean','reset','help')]
+                 'verify','health','onec-check','test','clean','reset','help')]
     [string]$Command = 'help',
 
     [string]$Id,
@@ -24,6 +24,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Значения БД берём из окружения (.env), с дефолтами как в .env.example.
+$PgUser = if ($env:POSTGRES_USER) { $env:POSTGRES_USER } else { 'integration' }
+$PgDb   = if ($env:POSTGRES_DB)   { $env:POSTGRES_DB }   else { 'integration' }
 
 function Invoke-Compose { param([string]$ComposeArgs) Invoke-Expression "docker compose $ComposeArgs" }
 
@@ -38,7 +42,7 @@ switch ($Command) {
     'logs'      { Invoke-Compose 'logs -f' }
     'ps'        { Invoke-Compose 'ps' }
     'topics'    { Invoke-Compose 'exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --list' }
-    'psql'      { Invoke-Compose 'exec postgres psql -U integration -d integration' }
+    'psql'      { Invoke-Compose "exec postgres psql -U $PgUser -d $PgDb" }
     'sync-full' { Invoke-Compose 'exec integration-service python -m integration sync full' }
     'sync-incremental' { Invoke-Compose 'exec integration-service python -m integration sync incremental' }
     'demo-touch' {
@@ -52,14 +56,19 @@ switch ($Command) {
     }
     'verify' {
         Get-Content -Raw -Encoding UTF8 'sql/verify.sql' |
-            & docker compose exec -T postgres psql -U integration -d integration -f -
+            & docker compose exec -T postgres psql -U $PgUser -d $PgDb -f -
     }
     'health'  { try { (Invoke-WebRequest -Uri 'http://localhost:8081/health' -UseBasicParsing).Content } catch { 'consumer unavailable' } }
+    'onec-check' { Invoke-Compose "exec integration-service python -c ""import os,httpx; u=os.environ['ONEC_BASE_URL']; r=httpx.get(u+'/ownership-forms',timeout=30); print('URL:',u); print('HTTP',r.status_code); print(r.text[:200])""" }
+    'test' {
+        Invoke-Compose 'exec integration-service python -m pytest -q'
+        Invoke-Compose 'exec consumer-service python -m pytest -q'
+    }
     'clean'   { Invoke-Compose 'down --remove-orphans' }
     'reset'   { Invoke-Compose 'down -v --remove-orphans' }
     default {
         Write-Host 'Commands: up, down, restart, build, logs, ps, topics, psql,'
         Write-Host '          sync-full, sync-incremental, demo-touch, demo-delete,'
-        Write-Host '          verify, health, clean, reset'
+        Write-Host '          verify, health, onec-check, test, clean, reset'
     }
 }

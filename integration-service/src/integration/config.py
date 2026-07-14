@@ -39,7 +39,9 @@ class Config:
             source_type=os.getenv("SOURCE_TYPE", "mock").lower(),
             onec_base_url=os.getenv(
                 "ONEC_BASE_URL",
-                "http://host.docker.internal/integration/hs/integration",
+                # По умолчанию не задан: реальный IPv4 хоста прописывается в .env.
+                # host.docker.internal НЕ используется (Docker Desktop → 502 на ISAPI 1С).
+                "http://HOST_IPV4_NOT_SET/roshim/hs/integration",
             ),
             onec_username=os.getenv("ONEC_USERNAME", ""),
             onec_password=os.getenv("ONEC_PASSWORD", ""),

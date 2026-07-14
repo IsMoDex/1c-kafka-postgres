@@ -54,8 +54,15 @@ class EventProducer:
         self._producer.poll(0)
 
     def flush(self, timeout: float = 30.0) -> int:
-        """Дожидается подтверждения всех сообщений. Возвращает число ошибок доставки."""
+        """Дожидается подтверждения всех сообщений.
+
+        Возвращает суммарное число проблем доставки: ошибки delivery-callback
+        ПЛЮС неотправленные сообщения (remaining), оставшиеся в очереди после
+        таймаута. Оба случая означают, что не все события гарантированно ушли
+        в Kafka, поэтому вызывающий код обязан трактовать ненулевой результат
+        как провал синхронизации и НЕ продвигать watermark.
+        """
         remaining = self._producer.flush(timeout)
         if remaining > 0:
             log.error("kafka_flush_timeout", remaining=remaining)
-        return self._delivery_errors
+        return self._delivery_errors + remaining

@@ -6,11 +6,15 @@
 
 COMPOSE ?= docker compose
 
+# Значения БД берутся из окружения (.env), с дефолтами как в .env.example.
+PG_USER ?= $(or $(POSTGRES_USER),integration)
+PG_DB   ?= $(or $(POSTGRES_DB),integration)
+
 .DEFAULT_GOAL := help
 
 .PHONY: help up down restart build logs ps topics psql \
         sync-full sync-incremental demo-touch demo-delete \
-        verify clean reset health
+        verify clean reset health onec-check test
 
 help: ## Показать список команд
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -53,13 +57,20 @@ demo-delete: ## Пометить контрагента удалённым в mo
 
 # ── Проверки ─────────────────────────────────────────────────────────────────
 psql: ## Открыть psql в контейнере postgres
-	$(COMPOSE) exec postgres psql -U integration -d integration
+	$(COMPOSE) exec postgres psql -U "$(PG_USER)" -d "$(PG_DB)"
 
 verify: ## Показать содержимое таблиц (проверочные запросы)
-	$(COMPOSE) exec -T postgres psql -U integration -d integration -f - < sql/verify.sql
+	$(COMPOSE) exec -T postgres psql -U "$(PG_USER)" -d "$(PG_DB)" -f - < sql/verify.sql
 
 health: ## Проверить /health consumer-service
 	@curl -s http://localhost:8081/health || echo "consumer недоступен"
+
+onec-check: ## Проверить доступность HTTP-сервиса 1С из контейнера (ONEC_BASE_URL)
+	$(COMPOSE) exec integration-service python -c "import os,httpx; u=os.environ['ONEC_BASE_URL']; r=httpx.get(u+'/ownership-forms',timeout=30); print('URL:',u); print('HTTP',r.status_code); print(r.text[:200])"
+
+test: ## Запустить unit-тесты сервисов (pytest в контейнерах)
+	$(COMPOSE) exec integration-service python -m pytest -q
+	$(COMPOSE) exec consumer-service python -m pytest -q
 
 # ── Очистка ──────────────────────────────────────────────────────────────────
 clean: ## Остановить и удалить контейнеры + сети
