@@ -327,6 +327,9 @@ consumer restarts=0, DLQ пуст.
 - Добавлен отдельный живой pytest integration suite (`make test-integration`):
   реальная 1С → Kafka → consumer → PostgreSQL; unit/component тесты запускаются
   отдельно через `make test`.
+- Добавлен GitHub Actions CI: unit matrix + Docker Compose integration smoke на
+  mock-источнике; live 1С проверяется ручным workflow на self-hosted Windows
+  runner. Настройка описана в `docs/ci.md`.
 
 ---
 

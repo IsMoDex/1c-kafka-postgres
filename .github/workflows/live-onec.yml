@@ -1,0 +1,62 @@
+name: Live 1C Integration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-onec-integration
+  cancel-in-progress: false
+
+jobs:
+  live-onec:
+    name: Live 1C end-to-end
+    runs-on: [self-hosted, Windows, X64, roshim-1c]
+    timeout-minutes: 30
+    env:
+      SOURCE_TYPE: onec
+      ONEC_BASE_URL: ${{ secrets.ONEC_BASE_URL }}
+      ONEC_USERNAME: ${{ secrets.ONEC_USERNAME }}
+      ONEC_PASSWORD: ${{ secrets.ONEC_PASSWORD }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate live 1C configuration
+        shell: powershell
+        run: |
+          if (-not $env:ONEC_BASE_URL) {
+              throw 'Repository secret ONEC_BASE_URL is required.'
+          }
+
+      - name: Build and start the integration stack
+        shell: powershell
+        run: docker compose up -d --build
+
+      - name: Check 1C from the integration container
+        shell: powershell
+        run: ./make.ps1 onec-check
+
+      - name: Run live integration tests
+        shell: powershell
+        run: ./make.ps1 test-integration
+
+      - name: Verify PostgreSQL data
+        shell: powershell
+        run: ./make.ps1 verify
+
+      - name: Check consumer health
+        shell: powershell
+        run: ./make.ps1 health
+
+      - name: Show service logs on failure
+        if: failure()
+        shell: powershell
+        run: docker compose logs --no-color
+
+      - name: Stop the integration stack
+        if: always()
+        shell: powershell
+        run: docker compose down --remove-orphans

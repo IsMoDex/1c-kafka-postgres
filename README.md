@@ -27,6 +27,7 @@
 - [Перезапуск синхронизации](#перезапуск-синхронизации)
 - [Архитектурные решения](#архитектурные-решения)
 - [Ограничения](#ограничения)
+- [GitHub Actions](#github-actions)
 - [Запуск на Windows](#запуск-на-windows)
 
 ---
@@ -371,6 +372,21 @@ make sync-incremental && make verify          # deleted = true
 Что улучшил бы в промышленной версии: Schema Registry, план обмена 1С, exactly-once
 (outbox/транзакционный producer), кластер Kafka, TLS+SASL, Prometheus-метрики,
 мониторинг DLQ, CDC (Debezium) при больших объёмах — подробно в `docs/limitations.md`.
+
+---
+
+## GitHub Actions
+
+`.github/workflows/ci.yml` автоматически запускает unit-тесты обоих сервисов и
+Docker Compose integration smoke для push в `main` и pull request. Стандартный
+CI использует `SOURCE_TYPE=mock`, но остальные компоненты настоящие: Kafka,
+PostgreSQL, integration-service и consumer-service.
+
+Полная проверка с реальной 1С запускается вручную workflow
+`.github/workflows/live-onec.yml` на self-hosted Windows runner.
+
+Настройка runner, GitHub Secrets и branch protection подробно описана в
+[`docs/ci.md`](docs/ci.md).
 
 ---
 
