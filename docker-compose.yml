@@ -1,0 +1,224 @@
+services:
+  # ────────────────────────────────────────────────────────────────────────
+  # PostgreSQL — целевая БД интеграции
+  # ────────────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: rh-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-integration}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-integration}
+      POSTGRES_DB: ${POSTGRES_DB:-integration}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-integration} -d ${POSTGRES_DB:-integration}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [rh-net]
+
+  # ────────────────────────────────────────────────────────────────────────
+  # Применение миграций (one-shot). Ждёт готовности postgres, применяет SQL.
+  # ────────────────────────────────────────────────────────────────────────
+  migrate:
+    image: postgres:16-alpine
+    container_name: rh-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-integration}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-integration}
+      PGDATABASE: ${POSTGRES_DB:-integration}
+    volumes:
+      - ./migrations:/migrations:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        echo "Applying migrations..."
+        for f in $$(ls -1 /migrations/*.sql | sort); do
+          echo "  -> $$f"
+          psql -v ON_ERROR_STOP=1 -f "$$f"
+        done
+        echo "Migrations applied."
+    networks: [rh-net]
+
+  # ────────────────────────────────────────────────────────────────────────
+  # Kafka (KRaft, без ZooKeeper) — шина данных
+  # ────────────────────────────────────────────────────────────────────────
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: rh-kafka
+    restart: unless-stopped
+    ports:
+      - "${KAFKA_EXTERNAL_PORT:-9092}:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:19092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:19092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID:-5L6g3nShT-eMCtK--X86sw}
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+    networks: [rh-net]
+
+  # ────────────────────────────────────────────────────────────────────────
+  # Создание топиков (one-shot). Идемпотентно (--if-not-exists).
+  # ────────────────────────────────────────────────────────────────────────
+  kafka-init:
+    image: apache/kafka:3.8.0
+    container_name: rh-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        B=kafka:19092
+        create() {
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server $$B --create --if-not-exists \
+            --topic "$$1" --partitions "$$2" --replication-factor 1
+        }
+        echo "Creating topics..."
+        create 1c.ownership_forms.v1 1
+        create 1c.counterparties.v1 3
+        create 1c.ownership_forms.dlq 1
+        create 1c.counterparties.dlq 1
+        echo "Topics:"
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server $$B --list
+    networks: [rh-net]
+
+  # ────────────────────────────────────────────────────────────────────────
+  # Kafka UI — просмотр топиков/сообщений
+  # ────────────────────────────────────────────────────────────────────────
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: rh-kafka-ui
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "${KAFKA_UI_PORT:-8080}:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: rh-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19092
+      DYNAMIC_CONFIG_ENABLED: "true"
+    networks: [rh-net]
+
+  # ────────────────────────────────────────────────────────────────────────
+  # consumer-service — читает Kafka, пишет в PostgreSQL (upsert)
+  # ────────────────────────────────────────────────────────────────────────
+  consumer-service:
+    build:
+      context: ./consumer-service
+    container_name: rh-consumer
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      KAFKA_CONSUMER_GROUP: ${KAFKA_CONSUMER_GROUP:-integration-consumer}
+      KAFKA_TOPICS: 1c.ownership_forms.v1,1c.counterparties.v1
+      KAFKA_DLQ_SUFFIX: .dlq
+      PG_DSN: postgresql://${POSTGRES_USER:-integration}:${POSTGRES_PASSWORD:-integration}@postgres:5432/${POSTGRES_DB:-integration}
+      MAX_RETRIES: ${MAX_RETRIES:-3}
+      BATCH_MAX_MESSAGES: ${BATCH_MAX_MESSAGES:-500}
+      BATCH_MAX_SECONDS: ${BATCH_MAX_SECONDS:-2}
+      HEALTH_PORT: 8081
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "${CONSUMER_HEALTH_PORT:-8081}:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8081/health').status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [rh-net]
+
+  # ────────────────────────────────────────────────────────────────────────
+  # integration-service — producer (CLI). Запускается разово через `make`.
+  # По умолчанию простаивает; синхронизацию запускаем командой (см. Makefile).
+  # ────────────────────────────────────────────────────────────────────────
+  integration-service:
+    build:
+      context: ./integration-service
+    container_name: rh-integration
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      TOPIC_OWNERSHIP_FORMS: 1c.ownership_forms.v1
+      TOPIC_COUNTERPARTIES: 1c.counterparties.v1
+      PG_DSN: postgresql://${POSTGRES_USER:-integration}:${POSTGRES_PASSWORD:-integration}@postgres:5432/${POSTGRES_DB:-integration}
+      SOURCE_TYPE: ${SOURCE_TYPE:-mock}
+      ONEC_BASE_URL: ${ONEC_BASE_URL:-http://host.docker.internal/integration/hs/integration}
+      ONEC_USERNAME: ${ONEC_USERNAME:-}
+      ONEC_PASSWORD: ${ONEC_PASSWORD:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    # держим контейнер живым, чтобы запускать `docker compose exec integration-service ...`
+    entrypoint: ["sleep", "infinity"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [rh-net]
+
+  # ────────────────────────────────────────────────────────────────────────
+  # pgAdmin (опционально) — GUI для PostgreSQL
+  # ────────────────────────────────────────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: rh-pgadmin
+    restart: unless-stopped
+    profiles: ["extras"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    networks: [rh-net]
+
+volumes:
+  pgdata:
+
+networks:
+  rh-net:
+    driver: bridge

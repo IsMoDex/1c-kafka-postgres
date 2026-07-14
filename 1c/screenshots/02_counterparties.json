@@ -1,0 +1,52 @@
+[
+{
+"id": "bf01dbd5-7f37-11f1-aa4f-803049708148",
+"code": "000001",
+"name": "ООО Ромашка (обновлено)",
+"inn": "7701234567",
+"kpp": "770101001",
+"ownership_form_id": "ooo",
+"deleted": false,
+"updated_at": "2026-07-14T04:00:59Z"
+},
+{
+"id": "bf01dbd6-7f37-11f1-aa4f-803049708148",
+"code": "000002",
+"name": "ИП Иванов И.И.",
+"inn": "770212345678",
+"kpp": "",
+"ownership_form_id": "ip",
+"deleted": false,
+"updated_at": "2026-07-14T03:54:44Z"
+},
+{
+"id": "bf01dbd7-7f37-11f1-aa4f-803049708148",
+"code": "000003",
+"name": "АО Север",
+"inn": "7803001122",
+"kpp": "780301001",
+"ownership_form_id": "ao",
+"deleted": false,
+"updated_at": "2026-07-14T03:54:44Z"
+},
+{
+"id": "bf01dbd8-7f37-11f1-aa4f-803049708148",
+"code": "000004",
+"name": "ПАО Энергия",
+"inn": "7704556677",
+"kpp": "770401001",
+"ownership_form_id": "pao",
+"deleted": false,
+"updated_at": "2026-07-14T03:54:44Z"
+},
+{
+"id": "bf01dbd9-7f37-11f1-aa4f-803049708148",
+"code": "000005",
+"name": "ООО Вектор",
+"inn": "5001889900",
+"kpp": "500101001",
+"ownership_form_id": "ooo",
+"deleted": true,
+"updated_at": "2026-07-14T04:01:20Z"
+}
+]

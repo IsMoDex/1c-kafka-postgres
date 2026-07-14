@@ -1,0 +1,30 @@
+[
+{
+"id": "ooo",
+"code": "000000001",
+"name": "ООО",
+"deleted": false,
+"updated_at": "2026-07-14T03:54:44Z"
+},
+{
+"id": "ip",
+"code": "000000002",
+"name": "ИП",
+"deleted": false,
+"updated_at": "2026-07-14T03:54:44Z"
+},
+{
+"id": "ao",
+"code": "000000003",
+"name": "АО",
+"deleted": false,
+"updated_at": "2026-07-14T03:54:44Z"
+},
+{
+"id": "pao",
+"code": "000000004",
+"name": "ПАО",
+"deleted": false,
+"updated_at": "2026-07-14T03:54:44Z"
+}
+]

@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:app="http://v8.1c.ru/8.2/managed-application/core" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:cmi="http://v8.1c.ru/8.2/managed-application/cmi" xmlns:ent="http://v8.1c.ru/8.1/data/enterprise" xmlns:lf="http://v8.1c.ru/8.2/managed-application/logform" xmlns:style="http://v8.1c.ru/8.1/data/ui/style" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:xen="http://v8.1c.ru/8.3/xcf/enums" xmlns:xpr="http://v8.1c.ru/8.3/xcf/predef" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="2.21">
+	<HTTPService uuid="28563598-7c83-4135-bd40-5c37f807253e">
+		<Properties>
+			<Name>ИнтеграционныйСервис</Name>
+			<Synonym>
+				<v8:item>
+					<v8:lang>ru</v8:lang>
+					<v8:content>Интеграционный сервис</v8:content>
+				</v8:item>
+			</Synonym>
+			<Comment/>
+			<RootURL>integration</RootURL>
+			<ReuseSessions>DontUse</ReuseSessions>
+			<SessionMaxAge>20</SessionMaxAge>
+		</Properties>
+		<ChildObjects>
+			<URLTemplate uuid="a3ab1874-cd2a-40f4-a1e9-6d1790ca4783">
+				<Properties>
+					<Name>OwnershipForms</Name>
+					<Synonym/>
+					<Comment/>
+					<Template>/ownership-forms</Template>
+				</Properties>
+				<ChildObjects>
+					<Method uuid="ed5c29d1-1f70-468f-8fe2-cbcd7cd9d7df">
+						<Properties>
+							<Name>get</Name>
+							<Synonym/>
+							<Comment/>
+							<HTTPMethod>GET</HTTPMethod>
+							<Handler>ФормыСобственностиGET</Handler>
+						</Properties>
+					</Method>
+				</ChildObjects>
+			</URLTemplate>
+			<URLTemplate uuid="301bd94d-7555-4db1-b0f7-70f0abf33ab8">
+				<Properties>
+					<Name>Counterparties</Name>
+					<Synonym/>
+					<Comment/>
+					<Template>/counterparties</Template>
+				</Properties>
+				<ChildObjects>
+					<Method uuid="a1fe3f59-a911-4282-b49f-d55f4e93263b">
+						<Properties>
+							<Name>get</Name>
+							<Synonym/>
+							<Comment/>
+							<HTTPMethod>GET</HTTPMethod>
+							<Handler>КонтрагентыGET</Handler>
+						</Properties>
+					</Method>
+				</ChildObjects>
+			</URLTemplate>
+			<URLTemplate uuid="eb19a7d7-81ed-4a8f-9975-16d959f46d70">
+				<Properties>
+					<Name>Seed</Name>
+					<Synonym/>
+					<Comment/>
+					<Template>/seed</Template>
+				</Properties>
+				<ChildObjects>
+					<Method uuid="270769e9-06f1-4ebf-9240-e0f0a8f04940">
+						<Properties>
+							<Name>post</Name>
+							<Synonym/>
+							<Comment/>
+							<HTTPMethod>POST</HTTPMethod>
+							<Handler>SeedPOST</Handler>
+						</Properties>
+					</Method>
+				</ChildObjects>
+			</URLTemplate>
+			<URLTemplate uuid="08a61fd7-86e4-47eb-9b77-0d193c67f4bb">
+				<Properties>
+					<Name>Touch</Name>
+					<Synonym/>
+					<Comment/>
+					<Template>/touch</Template>
+				</Properties>
+				<ChildObjects>
+					<Method uuid="0e4c7033-5be7-4483-bad2-d59375b8746b">
+						<Properties>
+							<Name>post</Name>
+							<Synonym/>
+							<Comment/>
+							<HTTPMethod>POST</HTTPMethod>
+							<Handler>TouchPOST</Handler>
+						</Properties>
+					</Method>
+				</ChildObjects>
+			</URLTemplate>
+			<URLTemplate uuid="6e593854-0569-4b8b-8e51-6332da5390d5">
+				<Properties>
+					<Name>Delete</Name>
+					<Synonym/>
+					<Comment/>
+					<Template>/delete</Template>
+				</Properties>
+				<ChildObjects>
+					<Method uuid="98a4ca22-1f5e-413c-ad46-21b27ef02556">
+						<Properties>
+							<Name>post</Name>
+							<Synonym/>
+							<Comment/>
+							<HTTPMethod>POST</HTTPMethod>
+							<Handler>DeletePOST</Handler>
+						</Properties>
+					</Method>
+				</ChildObjects>
+			</URLTemplate>
+		</ChildObjects>
+	</HTTPService>
+</MetaDataObject>
