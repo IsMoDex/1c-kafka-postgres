@@ -146,12 +146,10 @@ SOURCE_TYPE=onec
 ONEC_BASE_URL=http://172.23.128.1/roshim/hs/integration
 ```
 
-> **Важный нюанс сети.** Из Docker-контейнера обращение к 1С через
-> `host.docker.internal` (Docker Desktop) давало **HTTP 502** при обработке
-> ISAPI-ответа 1С, тогда как **реальный IPv4-адрес хоста** (интерфейс
-> `vEthernet (WSL)`, напр. `172.23.128.1`) работает стабильно. Поэтому в
-> `ONEC_BASE_URL` используется IP хоста, а не `host.docker.internal`.
-> Актуальный IP смотреть: `ipconfig` → адрес адаптера vEthernet (WSL).
+> **Важный нюанс сети.** Сначала используйте `host.docker.internal`. В одном
+> состоянии Docker Desktop/IIS он давал **HTTP 502** при обработке ISAPI-ответа
+> 1С; fallback — **реальный IPv4-адрес хоста** (интерфейс `vEthernet (WSL)`,
+> напр. `172.23.128.1`). Актуальный IP: `ipconfig` → vEthernet (WSL).
 
 Затем:
 ```bash
@@ -196,7 +194,7 @@ docker compose exec integration-service python -m integration sync incremental
 | HTTP 500.21, «IsapiModule повреждён» | В IIS выключены ISAPI Extensions/Filter | Включить компоненты IIS (см. п.4.1) |
 | HTTP 500 на любой запрос | Пул IIS 64-бит, а `wsisapi.dll` x86 | `enable32BitAppOnWin64:true` |
 | OData `$metadata` пуст (0 EntitySet) | Не задан состав стандартного OData | Перешли на собственный HTTP-сервис (Вариант Б) |
-| HTTP 502 из контейнера | `host.docker.internal` в Docker Desktop | Использовать реальный IPv4 хоста |
+| HTTP 502 из контейнера | Особенность текущего состояния Docker Desktop/IIS | Вместо `host.docker.internal` использовать реальный IPv4 хоста |
 | «Неопределена ИБ» в headless OData | Нестабильный парсинг аргументов команды 8.5 | HTTP-сервис вместо OData |
 
 ---

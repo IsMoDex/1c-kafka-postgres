@@ -38,6 +38,13 @@ def _build_source(cfg: Config) -> Source:
         log.info("source_selected", type="mock")
         return MockSource()
     if cfg.source_type == "onec":
+        if "HOST_IPV4_NOT_SET" in cfg.onec_base_url or "<HOST_IPV4>" in cfg.onec_base_url:
+            raise typer.BadParameter(
+                "Для SOURCE_TYPE=onec замените placeholder в ONEC_BASE_URL. "
+                "Используйте http://host.docker.internal/roshim/hs/integration; "
+                "если Docker Desktop возвращает 502, укажите реальный IPv4 хоста, "
+                "например http://172.23.128.1/roshim/hs/integration."
+            )
         log.info("source_selected", type="onec", base_url=cfg.onec_base_url)
         return OneCHttpSource(
             base_url=cfg.onec_base_url,

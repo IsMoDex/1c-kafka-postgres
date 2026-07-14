@@ -187,8 +187,8 @@ services:
       TOPIC_COUNTERPARTIES: 1c.counterparties.v1
       PG_DSN: postgresql://${POSTGRES_USER:-integration}:${POSTGRES_PASSWORD:-integration}@postgres:5432/${POSTGRES_DB:-integration}
       SOURCE_TYPE: ${SOURCE_TYPE:-mock}
-      # Для SOURCE_TYPE=onec задайте ONEC_BASE_URL в .env реальным IPv4 хоста
-      # (НЕ host.docker.internal — Docker Desktop отдаёт 502 на ISAPI-ответ 1С).
+      # Для SOURCE_TYPE=onec задайте ONEC_BASE_URL в .env. Начните с
+      # host.docker.internal; при HTTP 502 используйте реальный IPv4 хоста.
       ONEC_BASE_URL: ${ONEC_BASE_URL:-http://HOST_IPV4_NOT_SET/roshim/hs/integration}
       ONEC_USERNAME: ${ONEC_USERNAME:-}
       ONEC_PASSWORD: ${ONEC_PASSWORD:-}

@@ -107,9 +107,9 @@ GET /counterparties?changed_since=<RFC3339>
 SOURCE_TYPE=onec
 ONEC_BASE_URL=http://<IP-хоста>/roshim/hs/integration
 ```
-> Из контейнера используется **реальный IPv4 хоста** (не `host.docker.internal` —
-> Docker Desktop не проксирует ISAPI-ответ 1С, отдаёт 502). Актуальный IP —
-> `ipconfig` (адаптер vEthernet WSL). Подробности — в `1c/setup.md`.
+> Из контейнера сначала используйте `host.docker.internal`. Если конкретная
+> конфигурация Docker Desktop/IIS отдаёт HTTP 502, используйте **реальный IPv4
+> хоста** (`ipconfig`, адаптер vEthernet WSL). Подробности — в `1c/setup.md`.
 
 **Абстракция источника (`mock`/`onec`)** сохранена: контур Kafka → PostgreSQL
 воспроизводим и без 1С (демо/CI) переключением `SOURCE_TYPE=mock`.
@@ -325,8 +325,26 @@ make sync-incremental && make verify          # deleted = true
 
 Если GNU `make` не установлен, используйте PowerShell-обёртку `make.ps1`:
 
+**Реальная 1С (приоритетный сценарий):**
+
 ```powershell
 Copy-Item .env.example .env
+# Отредактируйте .env:
+#   SOURCE_TYPE=onec
+#   ONEC_BASE_URL=http://<IP-хоста>/roshim/hs/integration
+./make.ps1 up
+./make.ps1 onec-check
+./make.ps1 sync-full
+./make.ps1 verify
+./make.ps1 sync-incremental
+./make.ps1 health
+./make.ps1 down
+```
+
+**Mock-источник (fallback без 1С):**
+
+```powershell
+Copy-Item .env.example .env   # SOURCE_TYPE=mock по умолчанию
 ./make.ps1 up
 ./make.ps1 sync-full
 ./make.ps1 verify
@@ -361,5 +379,6 @@ Copy-Item .env.example .env
 ## Требования
 
 - Docker + Docker Compose.
-- Для реального источника: 1С:Предприятие 8.3 + веб-сервер (см. `1c/setup.md`).
+- Для реального источника: 1С:Предприятие 8.3+ и веб-сервер
+  (проверено на 8.5.1.1302 community; см. `1c/setup.md`).
 - Для `make`: GNU make (Linux/macOS/WSL/Git Bash) либо `make.ps1` на Windows.
