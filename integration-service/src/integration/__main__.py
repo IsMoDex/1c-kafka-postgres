@@ -52,6 +52,8 @@ def _build_source(cfg: Config) -> Source:
             password=cfg.onec_password,
             timeout=cfg.onec_timeout,
             verify_ssl=cfg.onec_verify_ssl,
+            retries=cfg.onec_http_retries,
+            page_size=cfg.onec_page_size,
         )
     raise typer.BadParameter(f"Неизвестный SOURCE_TYPE={cfg.source_type!r} (ожидается mock|onec)")
 

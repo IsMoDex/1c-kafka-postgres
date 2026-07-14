@@ -25,6 +25,9 @@ class Config:
     onec_password: str
     onec_timeout: float
     onec_verify_ssl: bool
+    onec_http_retries: int
+    onec_page_size: int
+    fk_barrier_timeout: float
 
     @staticmethod
     def from_env() -> "Config":
@@ -46,4 +49,7 @@ class Config:
             onec_password=os.getenv("ONEC_PASSWORD", ""),
             onec_timeout=float(os.getenv("ONEC_TIMEOUT", "30")),
             onec_verify_ssl=os.getenv("ONEC_VERIFY_SSL", "true").lower() == "true",
+            onec_http_retries=int(os.getenv("ONEC_HTTP_RETRIES", "3")),
+            onec_page_size=int(os.getenv("ONEC_PAGE_SIZE", "500")),
+            fk_barrier_timeout=float(os.getenv("FK_BARRIER_TIMEOUT", "30")),
         )

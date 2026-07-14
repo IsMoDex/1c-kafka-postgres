@@ -26,8 +26,8 @@ ON CONFLICT (id) DO UPDATE SET
     deleted = EXCLUDED.deleted,
     imported_at = now()
 WHERE ownership_forms.source_updated_at IS NULL
-   OR EXCLUDED.source_updated_at IS NULL
-   OR EXCLUDED.source_updated_at >= ownership_forms.source_updated_at
+   OR (EXCLUDED.source_updated_at IS NOT NULL
+       AND EXCLUDED.source_updated_at >= ownership_forms.source_updated_at)
 """
 
 _UPSERT_COUNTERPARTY = """
@@ -46,15 +46,25 @@ ON CONFLICT (id) DO UPDATE SET
     deleted = EXCLUDED.deleted,
     imported_at = now()
 WHERE counterparties.source_updated_at IS NULL
-   OR EXCLUDED.source_updated_at IS NULL
-   OR EXCLUDED.source_updated_at >= counterparties.source_updated_at
+   OR (EXCLUDED.source_updated_at IS NOT NULL
+       AND EXCLUDED.source_updated_at >= counterparties.source_updated_at)
 """
 
 
 class Database:
     def __init__(self, dsn: str) -> None:
         self._dsn = dsn
-        self._conn = psycopg.connect(dsn, autocommit=False, row_factory=tuple_row)
+        self._conn = self._connect()
+
+    def _connect(self):
+        return psycopg.connect(self._dsn, autocommit=False, row_factory=tuple_row)
+
+    def _reconnect(self) -> None:
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+        self._conn = self._connect()
 
     def ping(self) -> bool:
         try:
@@ -64,7 +74,15 @@ class Database:
             self._conn.rollback()
             return True
         except Exception:
-            return False
+            try:
+                self._reconnect()
+                with self._conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+                    cur.fetchone()
+                self._conn.rollback()
+                return True
+            except Exception:
+                return False
 
     def apply_batch(
         self,
@@ -83,8 +101,13 @@ class Database:
                 for row in counterparties:
                     cur.execute(_UPSERT_COUNTERPARTY, row)
             self._conn.commit()
-        except Exception:
-            self._conn.rollback()
+        except Exception as exc:
+            try:
+                self._conn.rollback()
+            except Exception:
+                pass
+            if isinstance(exc, (psycopg.OperationalError, psycopg.InterfaceError)):
+                self._reconnect()
             raise
 
     def close(self) -> None:

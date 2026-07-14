@@ -6,8 +6,8 @@
 |---|---|---|---|
 | `1c.ownership_forms.v1` | Формы собственности (upsert/delete) | 1 | `id` формы |
 | `1c.counterparties.v1` | Контрагенты (upsert/delete) | 3 | `id` (GUID) |
-| `1c.ownership_forms.dlq` | Dead-letter форм собственности | 1 | исходный |
-| `1c.counterparties.dlq` | Dead-letter контрагентов | 1 | исходный |
+| `1c.ownership_forms.v1.dlq` | Dead-letter форм собственности | 1 | исходный |
+| `1c.counterparties.v1.dlq` | Dead-letter контрагентов | 1 | исходный |
 
 **Ключ сообщения** — стабильный `id` объекта 1С. Гарантирует порядок по объекту
 и корректную работу партиционирования.
@@ -31,6 +31,10 @@
 | `source` | string | Источник, всегда `1c` |
 | `occurred_at` | RFC3339 | Момент формирования события |
 | `payload` | object | Тело записи справочника (см. ниже) |
+
+Consumer строго проверяет UUID, RFC3339 timestamps, boolean-поля, допустимый
+`source=1c`, отсутствие лишних полей и один из четырёх перечисленных event type.
+Некорректный контракт отправляется в DLQ и не применяется к PostgreSQL.
 
 ## payload — Форма собственности
 
@@ -75,8 +79,11 @@
 GET {base}/ownership-forms                      → [ {payload формы}, ... ]
 GET {base}/counterparties                        → [ {payload контрагента}, ... ]
 GET {base}/counterparties?changed_since=<RFC3339> → только изменённые
+GET {base}/counterparties?limit=500&offset=0      → страница результата
 ```
 
 Ответ — JSON-массив, `Content-Type: application/json`.
 Отсутствующий `changed_since` означает полную выборку; невалидное значение
 возвращает HTTP 400 (`invalid changed_since; expected RFC3339`).
+Producer читает страницы последовательно; transport errors, HTTP 429 и 5xx
+повторяются с ограниченным exponential backoff.

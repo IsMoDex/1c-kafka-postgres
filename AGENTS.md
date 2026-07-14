@@ -104,7 +104,7 @@ upsert и мягким удалением.
 ### 5.1. Топики Kafka
 - `1c.ownership_forms.v1` — формы собственности
 - `1c.counterparties.v1` — контрагенты
-- `1c.ownership_forms.dlq` / `1c.counterparties.dlq` — dead-letter
+- `1c.ownership_forms.v1.dlq` / `1c.counterparties.v1.dlq` — dead-letter
 
 **Ключ сообщения** = `id` объекта 1С (стабильный) → идемпотентность + порядок по ключу.
 
@@ -168,8 +168,8 @@ CREATE TABLE sync_state (
 
 1. **Идемпотентность.** Запись в PG только через `INSERT ... ON CONFLICT (id) DO UPDATE`.
    Повторная синхронизация НЕ создаёт дублей (демо-сценарий ТЗ, п.6).
-2. **Порядок применения.** `ownership_forms` синхронизируем/применяем ДО `counterparties`
-   (FK `counterparties.ownership_form_id → ownership_forms.id`).
+2. **Порядок применения.** После flush форм producer ждёт их появления в PG и
+   только затем публикует `counterparties` (между Kafka-топиками порядка нет).
 3. **Защита от гонки FK в consumer.** Если контрагент ссылается на ещё не пришедшую
    форму собственности → retry, при исчерпании → DLQ. Не ронять весь пакет.
 4. **Мягкое удаление.** Удаление = событие с `deleted=true`, UPDATE флага, строку не DELETE.
@@ -293,21 +293,37 @@ consumer restarts=0, DLQ пуст.
 - **BSL (1С)**: `ПараметрChangedSince` без параметра → `Неопределено` (full без
   фильтра); `ISOВДату` — устойчивый парс RFC3339 (первые 14 цифр); `inn/kpp`
   пустые строки → `null` (единообразие с mock).
-- **unit-тесты**: integration (mock/event, 10) + consumer (parse_event, 5) = 15,
-  все проходят (`make test`).
+- **unit-тесты**: integration + consumer, запуск одной командой `make test`.
 - **docs/README/AGENTS**: `configuration.dt`→`.cf`; версия 1С «8.3+ (реализовано
   на 8.5.1.1302)»; основной demo — на реальной 1С, mock как fallback; убрано
   устаревшее про `host.docker.internal`; в limitations добавлены seed create-only,
   fallback GUID формы, версия 8.5, сеть Docker.
 - **04_postgresql-data.txt**: пересоздан в корректном UTF-8 (без mojibake).
 
-Осознанно НЕ реализовано (аргументировано):
-- **#18** (изоляция отдельных сообщений при FK-конфликте вместо всего батча) —
-  в текущей модели порядок FK гарантирован (формы раньше контрагентов), конфликт
-  не возникает; усложнение не оправдано для демо-контура.
+Дополнительные решения:
+- **#18** закрыто PostgreSQL-барьером между публикацией forms и counterparties;
+  producer не публикует зависимые записи, пока consumer не применил формы.
 - **#21** (CHECK-ограничения inn/kpp в БД) — ТЗ не требует; интеграционная БД
   должна принимать данные как есть из 1С, жёсткая валидация на приёмнике может
   ронять легитимные записи. Валидация — задача источника.
+
+### Повторный независимый аудит и исправления (2026-07-14)
+- DLQ-топики согласованы с `<source-topic>.dlq`; poison message проверен на
+  реальном Kafka (`1c.counterparties.v1.dlq`).
+- При failed DLQ consumer делает `seek` всех partition к минимальному offset
+  batch; Kafka commit обрабатывается отдельно от PostgreSQL commit.
+- FK race между топиками закрыта flush + PostgreSQL barrier.
+- Watermark теперь source-based, full его инициализирует, incremental читает с
+  overlap 1 секунда; sync-запуски сериализованы advisory lock.
+- Consumer строго валидирует event envelope/payload; входящий NULL timestamp не
+  перезаписывает свежую строку.
+- PostgreSQL connection автоматически пересоздаётся после обрыва.
+- Health использует свежие heartbeat Kafka/PostgreSQL.
+- Kafka получила persistent volume; внешние порты bind-ятся на 127.0.0.1;
+  UI-образы закреплены; dynamic config Kafka UI выключен.
+- HTTP 1С получил retry/backoff и limit/offset pagination; обновлённая
+  конфигурация загружена в ИБ и выгружена в `configuration.cf`.
+- Итоговый набор тестов: integration 14 + consumer 18 = 32.
 
 ---
 

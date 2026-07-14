@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -22,6 +23,17 @@ class HealthState:
         self.messages_dlq = 0
         self.last_error: str | None = None
         self.last_kafka_error: str | None = None
+        self.last_db_ok_at: float | None = None
+        self.last_kafka_ok_at: float | None = None
+
+    def mark_db_ok(self) -> None:
+        self.db_ok = True
+        self.last_db_ok_at = time.time()
+
+    def mark_kafka_ok(self) -> None:
+        self.kafka_ok = True
+        self.last_kafka_error = None
+        self.last_kafka_ok_at = time.time()
 
     def snapshot(self) -> dict:
         return {
@@ -33,10 +45,15 @@ class HealthState:
             "messages_dlq": self.messages_dlq,
             "last_error": self.last_error,
             "last_kafka_error": self.last_kafka_error,
+            "last_db_ok_at": self.last_db_ok_at,
+            "last_kafka_ok_at": self.last_kafka_ok_at,
         }
 
     def healthy(self) -> bool:
-        return self.ready and self.db_ok and self.kafka_ok
+        now = time.time()
+        db_fresh = self.last_db_ok_at is not None and now - self.last_db_ok_at < 30
+        kafka_fresh = self.last_kafka_ok_at is not None and now - self.last_kafka_ok_at < 30
+        return self.ready and self.db_ok and self.kafka_ok and db_fresh and kafka_fresh
 
 
 def start_health_server(port: int, state: HealthState) -> ThreadingHTTPServer:

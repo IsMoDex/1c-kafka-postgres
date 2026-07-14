@@ -102,7 +102,8 @@ class Worker:
         )
         self._dlq = DlqProducer(config.kafka_bootstrap_servers, config.dlq_suffix)
         self._db = Database(config.pg_dsn)
-        self._health.db_ok = self._db.ping()
+        if self._db.ping():
+            self._health.mark_db_ok()
 
     def stop(self, *_) -> None:
         log.info("shutdown_signal_received")
@@ -111,11 +112,21 @@ class Worker:
     def run(self) -> None:
         self._consumer.subscribe(self._cfg.topics)
         self._health.ready = True
-        self._health.kafka_ok = True
         log.info("consumer_started", topics=self._cfg.topics, group=self._cfg.consumer_group)
 
+        next_db_ping = time.monotonic()
+        next_kafka_probe = time.monotonic()
         try:
             while self._running:
+                if time.monotonic() >= next_db_ping:
+                    if self._db.ping():
+                        self._health.mark_db_ok()
+                    else:
+                        self._health.db_ok = False
+                    next_db_ping = time.monotonic() + 10
+                if time.monotonic() >= next_kafka_probe:
+                    self._probe_kafka()
+                    next_kafka_probe = time.monotonic() + 10
                 batch = self._poll_batch()
                 if not batch:
                     continue
@@ -152,9 +163,19 @@ class Worker:
                 self._health.last_kafka_error = str(err)
                 log.error("kafka_consume_error", error=str(err))
                 raise KafkaException(err)
-            self._health.kafka_ok = True
+            self._health.mark_kafka_ok()
             batch.append(msg)
         return batch
+
+    def _probe_kafka(self) -> None:
+        """Проверяет broker запросом metadata, а не фактом локального poll timeout."""
+        try:
+            self._consumer.list_topics(timeout=2)
+            self._health.mark_kafka_ok()
+        except Exception as exc:  # noqa: BLE001
+            self._health.kafka_ok = False
+            self._health.last_kafka_error = str(exc)
+            log.warning("kafka_probe_failed", error=str(exc))
 
     # ── обработка батча ─────────────────────────────────────────────────────
     def _process_batch(self, batch: list) -> None:
@@ -187,6 +208,7 @@ class Worker:
         if dlq_failed:
             self._health.last_error = "DLQ delivery failed; batch will be retried"
             log.error("batch_not_committed_due_to_dlq_failure", messages=len(batch))
+            self._rewind(batch)
             return
 
         if ownership_rows or counterparty_rows:
@@ -201,19 +223,13 @@ class Worker:
             attempt += 1
             try:
                 self._db.apply_batch(of_rows, cp_rows)
-                self._health.db_ok = True
-                self._health.rows_processed += len(of_rows) + len(cp_rows)
-                self._health.messages_processed += len(batch)
-                self._commit(batch)
-                log.info(
-                    "batch_committed",
-                    ownership_forms=len(of_rows),
-                    counterparties=len(cp_rows),
-                    messages=len(batch),
-                )
-                return
+                self._health.mark_db_ok()
+                break
             except Exception as exc:  # noqa: BLE001
-                self._health.db_ok = self._db.ping()
+                if self._db.ping():
+                    self._health.mark_db_ok()
+                else:
+                    self._health.db_ok = False
                 self._health.last_error = str(exc)
                 log.error("batch_write_failed", attempt=attempt, error=str(exc))
                 if attempt > self._cfg.max_retries:
@@ -234,8 +250,45 @@ class Worker:
                         self._commit(batch)
                     else:
                         log.error("batch_not_committed_due_to_dlq_failure", messages=len(batch))
+                        self._rewind(batch)
                     return
                 time.sleep(min(2 ** attempt, 30))
+
+        try:
+            self._commit(batch)
+            self._health.mark_kafka_ok()
+        except Exception as exc:  # noqa: BLE001
+            self._health.kafka_ok = False
+            self._health.last_kafka_error = str(exc)
+            log.error("kafka_commit_failed", error=str(exc), messages=len(batch))
+            self._rewind(batch)
+            return
+
+        self._health.rows_processed += len(of_rows) + len(cp_rows)
+        self._health.messages_processed += len(batch)
+        self._health.last_error = None
+        log.info(
+            "batch_committed",
+            ownership_forms=len(of_rows),
+            counterparties=len(cp_rows),
+            messages=len(batch),
+        )
+
+    def _rewind(self, batch: list) -> None:
+        """Возвращает consumer к началу batch после неподтверждённой DLQ-доставки.
+
+        Отсутствия commit недостаточно: poll уже передвинул локальную позицию.
+        Seek обязателен для всех partition batch, иначе последующий commit может
+        перескочить сообщения, которые мы намеренно не обработали.
+        """
+        min_offsets: dict[tuple[str, int], int] = {}
+        for msg in batch:
+            key = (msg.topic(), msg.partition())
+            offset = int(msg.offset())
+            min_offsets[key] = min(offset, min_offsets.get(key, offset))
+        for (topic, partition), offset in min_offsets.items():
+            self._consumer.seek(TopicPartition(topic, partition, offset))
+        log.warning("batch_rewound", partitions=len(min_offsets), messages=len(batch))
 
     def _commit(self, batch: list) -> None:
         """Коммитим максимальный offset+1 по каждой (topic, partition) батча."""

@@ -53,10 +53,10 @@ demo-delete: ## Пометить контрагента удалённым в mo
 
 # ── Проверки ─────────────────────────────────────────────────────────────────
 psql: ## Открыть psql в контейнере postgres
-	$(COMPOSE) exec postgres sh -lc 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
+	$(COMPOSE) exec postgres sh -c "psql -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""
 
 verify: ## Показать содержимое таблиц (проверочные запросы)
-	$(COMPOSE) exec -T postgres sh -lc 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -f -' < sql/verify.sql
+	$(COMPOSE) exec -T postgres sh -c "psql -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\" -f -" < sql/verify.sql
 
 health: ## Проверить /health consumer-service
 	@curl -s http://localhost:8081/health || echo "consumer недоступен"

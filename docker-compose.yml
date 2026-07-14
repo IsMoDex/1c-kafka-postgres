@@ -11,7 +11,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-integration}
       POSTGRES_DB: ${POSTGRES_DB:-integration}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -58,7 +58,7 @@ services:
     container_name: rh-kafka
     restart: unless-stopped
     ports:
-      - "${KAFKA_EXTERNAL_PORT:-9092}:9092"
+      - "127.0.0.1:${KAFKA_EXTERNAL_PORT:-9092}:9092"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -73,7 +73,10 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
       CLUSTER_ID: ${KAFKA_CLUSTER_ID:-5L6g3nShT-eMCtK--X86sw}
+    volumes:
+      - kafkadata:/var/lib/kafka/data
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
       interval: 10s
@@ -103,8 +106,8 @@ services:
         echo "Creating topics..."
         create 1c.ownership_forms.v1 1
         create 1c.counterparties.v1 3
-        create 1c.ownership_forms.dlq 1
-        create 1c.counterparties.dlq 1
+        create 1c.ownership_forms.v1.dlq 1
+        create 1c.counterparties.v1.dlq 1
         echo "Topics:"
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server $$B --list
     networks: [rh-net]
@@ -113,18 +116,18 @@ services:
   # Kafka UI — просмотр топиков/сообщений
   # ────────────────────────────────────────────────────────────────────────
   kafka-ui:
-    image: provectuslabs/kafka-ui:latest
+    image: provectuslabs/kafka-ui@sha256:8f2ff02d64b0a7a2b71b6b3b3148b85f66d00ec20ad40c30bdcd415d46d31818
     container_name: rh-kafka-ui
     restart: unless-stopped
     depends_on:
       kafka:
         condition: service_healthy
     ports:
-      - "${KAFKA_UI_PORT:-8080}:8080"
+      - "127.0.0.1:${KAFKA_UI_PORT:-8080}:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: rh-local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19092
-      DYNAMIC_CONFIG_ENABLED: "true"
+      DYNAMIC_CONFIG_ENABLED: "false"
     networks: [rh-net]
 
   # ────────────────────────────────────────────────────────────────────────
@@ -156,7 +159,7 @@ services:
       HEALTH_PORT: 8081
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
-      - "${CONSUMER_HEALTH_PORT:-8081}:8081"
+      - "127.0.0.1:${CONSUMER_HEALTH_PORT:-8081}:8081"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8081/health').status==200 else 1)\""]
       interval: 15s
@@ -192,6 +195,11 @@ services:
       ONEC_BASE_URL: ${ONEC_BASE_URL:-http://HOST_IPV4_NOT_SET/roshim/hs/integration}
       ONEC_USERNAME: ${ONEC_USERNAME:-}
       ONEC_PASSWORD: ${ONEC_PASSWORD:-}
+      ONEC_TIMEOUT: ${ONEC_TIMEOUT:-30}
+      ONEC_VERIFY_SSL: ${ONEC_VERIFY_SSL:-true}
+      ONEC_HTTP_RETRIES: ${ONEC_HTTP_RETRIES:-3}
+      ONEC_PAGE_SIZE: ${ONEC_PAGE_SIZE:-500}
+      FK_BARRIER_TIMEOUT: ${FK_BARRIER_TIMEOUT:-30}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     # держим контейнер живым, чтобы запускать `docker compose exec integration-service ...`
     entrypoint: ["sleep", "infinity"]
@@ -203,7 +211,7 @@ services:
   # pgAdmin (опционально) — GUI для PostgreSQL
   # ────────────────────────────────────────────────────────────────────────
   pgadmin:
-    image: dpage/pgadmin4:latest
+    image: dpage/pgadmin4:9.5
     container_name: rh-pgadmin
     restart: unless-stopped
     profiles: ["extras"]
@@ -215,11 +223,12 @@ services:
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
       PGADMIN_CONFIG_SERVER_MODE: "False"
     ports:
-      - "${PGADMIN_PORT:-5050}:80"
+      - "127.0.0.1:${PGADMIN_PORT:-5050}:80"
     networks: [rh-net]
 
 volumes:
   pgdata:
+  kafkadata:
 
 networks:
   rh-net:

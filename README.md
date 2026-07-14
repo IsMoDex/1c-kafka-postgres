@@ -65,7 +65,7 @@ Kafka UI: <http://localhost:8080> · Consumer health: <http://localhost:8081/hea
 |---|---|
 | **1С 8.3+** (реализовано на 8.5.1.1302) | Источник справочных данных (собственный HTTP-сервис). Запускается вне Docker. |
 | **integration-service** | Producer: читает 1С, публикует события в Kafka. CLI (`full`/`incremental`). |
-| **Kafka (KRaft)** | Шина данных. Топики `1c.ownership_forms.v1`, `1c.counterparties.v1` + `.dlq`. |
+| **Kafka (KRaft)** | Шина данных. Топики `1c.ownership_forms.v1`, `1c.counterparties.v1` и соответствующие `*.v1.dlq`. |
 | **consumer-service** | Consumer: читает Kafka, делает upsert в PostgreSQL. Демон. |
 | **PostgreSQL** | Целевая интеграционная БД. |
 | **kafka-ui** | Просмотр топиков и сообщений. |
@@ -106,6 +106,10 @@ GET /counterparties?changed_since=<RFC3339>
 ```env
 SOURCE_TYPE=onec
 ONEC_BASE_URL=http://<IP-хоста>/roshim/hs/integration
+ONEC_TIMEOUT=30
+ONEC_HTTP_RETRIES=3
+ONEC_PAGE_SIZE=500
+FK_BARRIER_TIMEOUT=30
 ```
 > Из контейнера сначала используйте `host.docker.internal`. Если конкретная
 > конфигурация Docker Desktop/IIS отдаёт HTTP 502, используйте **реальный IPv4
@@ -135,8 +139,8 @@ mock: 4 формы собственности, 5 контрагентов.
 make up        # сборка образов + запуск + миграции + создание топиков
 make ps        # статус
 make logs      # логи (follow)
-make down      # остановить (данные в volume сохраняются)
-make reset     # полный сброс, включая данные PostgreSQL
+make down      # остановить (PostgreSQL и Kafka сохраняются в volumes)
+make reset     # полный сброс volumes PostgreSQL и Kafka
 ```
 
 Порядок старта управляется зависимостями compose: `postgres (healthy)` →
@@ -172,9 +176,15 @@ make sync-incremental
 docker compose exec integration-service python -m integration sync incremental
 ```
 
-Механизм: перед чтением фиксируется верхняя граница окна; из `sync_state`
-берётся `last_synced_at`; у источника запрашиваются записи с
-`changed_since=last_synced_at`; после успешной публикации watermark продвигается.
+Механизм: из `sync_state` берётся `last_synced_at`; запрос использует секундный
+overlap, поэтому граничные записи безопасно приходят повторно. После успешной
+публикации watermark устанавливается по максимальному `updated_at` самого
+источника, а не по часам контейнера. Full sync также инициализирует watermark.
+Запуски сериализуются advisory lock в PostgreSQL.
+
+Формы публикуются и flush-ятся первыми. Перед публикацией контрагентов producer
+ждёт, пока consumer применит все требуемые формы в PostgreSQL. Это устраняет
+гонку FK, которую нельзя гарантировать одним порядком записи в разные топики.
 
 > На стороне 1С инкремент опирается на реквизит `ДатаИзменения` (заполняется в
 > `ПередЗаписью`). Если он недоступен в выбранном варианте 1С — используйте
@@ -284,7 +294,7 @@ make sync-incremental && make verify          # deleted = true
   ```
 - **Переобработка из Kafka** (перечитать топики consumer'ом): сбросить offset
   группы или сменить `KAFKA_CONSUMER_GROUP` в `.env` и перезапустить consumer.
-- **Полный сброс** данных: `make reset` (удаляет volume PostgreSQL), затем `make up`.
+- **Полный сброс** данных: `make reset` (удаляет volumes PostgreSQL и Kafka), затем `make up`.
 
 Ошибки логируются структурированно (JSON) в stdout сервисов: `make logs`.
 

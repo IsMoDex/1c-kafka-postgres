@@ -4,12 +4,12 @@
   * full        — выгрузить все записи справочников;
   * incremental — выгрузить только изменённые с момента watermark (sync_state).
 
-Порядок: формы собственности публикуются раньше контрагентов (FK-зависимость
-на стороне PostgreSQL). Watermark продвигается только после успешного flush.
+Порядок: формы публикуются и применяются в PostgreSQL до публикации контрагентов.
+Watermark берётся из updated_at источника и меняется только после успешного flush.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import structlog
@@ -44,9 +44,12 @@ class Synchronizer:
         if mode not in ("full", "incremental"):
             raise ValueError(f"Неизвестный режим синхронизации: {mode!r}")
 
-        # верхняя граница окна фиксируется ДО чтения — во избежание потери
-        # изменений, произошедших во время выгрузки.
-        window_end = datetime.now(timezone.utc)
+        with self._state.lock():
+            return self._run_locked(mode)
+
+    def _run_locked(self, mode: str) -> dict:
+
+        run_started_at = datetime.now(timezone.utc)
 
         of_since = self._since("ownership_forms", mode)
         cp_since = self._since("counterparties", mode)
@@ -58,8 +61,21 @@ class Synchronizer:
         for form in forms:
             self._producer.publish(self._cfg.topic_ownership_forms, _ownership_event(form))
 
+        errors = self._producer.flush()
+        if errors:
+            log.error("sync_failed", stage="ownership_forms", delivery_errors=errors)
+            raise RuntimeError(f"Синхронизация прервана: ошибок доставки форм в Kafka = {errors}")
+
         # 2) контрагенты
         counterparties = self._source.fetch_counterparties(cp_since)
+
+        # Kafka не гарантирует порядок между топиками. До публикации зависимых
+        # записей ждём, пока consumer фактически применит требуемые формы в PG.
+        required_form_ids = {
+            cp.ownership_form_id for cp in counterparties if cp.ownership_form_id is not None
+        }
+        self._state.wait_for_ownership_forms(required_form_ids, self._cfg.fk_barrier_timeout)
+
         for cp in counterparties:
             self._producer.publish(self._cfg.topic_counterparties, _counterparty_event(cp))
 
@@ -68,16 +84,16 @@ class Synchronizer:
             log.error("sync_failed", delivery_errors=errors)
             raise RuntimeError(f"Синхронизация прервана: ошибок доставки в Kafka = {errors}")
 
-        # watermark продвигаем только после успешного flush
-        if mode == "incremental":
-            self._state.set("ownership_forms", window_end)
-            self._state.set("counterparties", window_end)
+        # Watermark берём из часов источника, а не integration-service. Overlap
+        # в _since защищает записи с одинаковой секундой ДатаИзменения.
+        self._advance_state("ownership_forms", forms, mode)
+        self._advance_state("counterparties", counterparties, mode)
 
         result = {
             "mode": mode,
             "ownership_forms": len(forms),
             "counterparties": len(counterparties),
-            "window_end": _iso(window_end),
+            "run_started_at": _iso(run_started_at),
         }
         log.info("sync_done", **result)
         return result
@@ -85,7 +101,13 @@ class Synchronizer:
     def _since(self, entity: str, mode: str) -> Optional[datetime]:
         if mode == "full":
             return None
-        return self._state.get(entity)
+        value = self._state.get(entity)
+        return value - timedelta(seconds=1) if value else None
+
+    def _advance_state(self, entity: str, records: list, mode: str) -> None:
+        timestamps = [record.updated_at for record in records if record.updated_at is not None]
+        if timestamps:
+            self._state.set(entity, max(timestamps), monotonic=mode == "incremental")
 
 
 def _iso(dt: Optional[datetime]) -> Optional[str]:

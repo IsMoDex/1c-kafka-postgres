@@ -24,6 +24,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+[Console]::OutputEncoding = $OutputEncoding
 
 function Invoke-Compose { param([string]$ComposeArgs) Invoke-Expression "docker compose $ComposeArgs" }
 
@@ -51,8 +53,8 @@ switch ($Command) {
         Invoke-Compose "exec integration-service python -m integration demo delete $Id"
     }
     'verify' {
-        Get-Content -Raw -Encoding UTF8 'sql/verify.sql' |
-            & docker compose exec -T postgres sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f -'
+        & docker compose cp 'sql/verify.sql' 'postgres:/tmp/verify.sql'
+        & docker compose exec -T postgres sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /tmp/verify.sql'
     }
     'health'  { try { (Invoke-WebRequest -Uri 'http://localhost:8081/health' -UseBasicParsing).Content } catch { 'consumer unavailable' } }
     'onec-check' { Invoke-Compose "exec integration-service python -c ""import os,httpx; u=os.environ['ONEC_BASE_URL']; r=httpx.get(u+'/ownership-forms',timeout=30); print('URL:',u); print('HTTP',r.status_code); print(r.text[:200])""" }
