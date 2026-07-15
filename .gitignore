@@ -15,6 +15,7 @@
 !/1c/screenshots/*.json
 !/1c/screenshots/*.md
 !/1c/screenshots/*.txt
+!/1c/screenshots/*.png
 !/1c/configuration.cf
 !/1c/setup.md
 

@@ -296,21 +296,43 @@ def test_soft_delete_health_and_dlq(
     config: Config,
     onec_client: httpx.Client,
 ) -> None:
+    reset = onec_client.post("/seed")
+    assert reset.status_code == 200
     rows = onec_client.get("/counterparties", params={"limit": 500, "offset": 0}).json()
     target = next(row for row in rows if row["code"] == "000005")
+    assert target["deleted"] is False
+
+    _sync(config, "incremental")
+    reset_offsets = _watermarks(config, TOPICS)
+    _wait_for_main_consumer(config, reset_offsets)
+    _wait_until(
+        lambda: _fetchone(config, "SELECT deleted FROM counterparties WHERE id = %s", (target["id"],))[0] is False,
+        "test setup did not restore the counterparty before soft delete",
+    )
     dlq_before = _watermarks(config, DLQ_TOPICS)
 
-    response = onec_client.post("/delete", params={"id": target["id"]})
-    assert response.status_code == 200
-    result = _sync(config, "incremental")
-    offsets = _watermarks(config, TOPICS)
-    _wait_for_main_consumer(config, offsets)
-    _wait_until(
-        lambda: _fetchone(config, "SELECT deleted FROM counterparties WHERE id = %s", (target["id"],))[0] is True,
-        "soft delete did not reach PostgreSQL",
-    )
-    assert result["counterparties"] >= 1
-    assert _watermarks(config, DLQ_TOPICS) == dlq_before
+    try:
+        response = onec_client.post("/delete", params={"id": target["id"]})
+        assert response.status_code == 200
+        result = _sync(config, "incremental")
+        offsets = _watermarks(config, TOPICS)
+        _wait_for_main_consumer(config, offsets)
+        _wait_until(
+            lambda: _fetchone(config, "SELECT deleted FROM counterparties WHERE id = %s", (target["id"],))[0] is True,
+            "soft delete did not reach PostgreSQL",
+        )
+        assert result["counterparties"] >= 1
+        assert _watermarks(config, DLQ_TOPICS) == dlq_before
+    finally:
+        restore = onec_client.post("/seed")
+        assert restore.status_code == 200
+        _sync(config, "incremental")
+        restore_offsets = _watermarks(config, TOPICS)
+        _wait_for_main_consumer(config, restore_offsets)
+        _wait_until(
+            lambda: _fetchone(config, "SELECT deleted FROM counterparties WHERE id = %s", (target["id"],))[0] is False,
+            "test cleanup did not remove the counterparty deletion mark",
+        )
 
     def health_is_green() -> bool:
         try:

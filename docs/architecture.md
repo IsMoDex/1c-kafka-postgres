@@ -4,7 +4,7 @@
 
 ```
 ┌──────────┐  HTTP/OData   ┌─────────────────────┐  produce  ┌─────────┐  consume  ┌──────────────────┐  upsert  ┌────────────┐
-│  1С 8.3+ │ ─────────────▶│ integration-service │ ─────────▶│  Kafka  │ ─────────▶│ consumer-service │ ────────▶│ PostgreSQL │
+│  1С 8.5  │ ─────────────▶│ integration-service │ ─────────▶│  Kafka  │ ─────────▶│ consumer-service │ ────────▶│ PostgreSQL │
 │ (Windows)│  справочники  │     (producer)      │  события  │ (KRaft) │  события  │   (consumer)     │ ON CONFLICT│           │
 └──────────┘               └─────────────────────┘           └─────────┘           └──────────────────┘          └────────────┘
                                     │                                                        │
@@ -17,7 +17,7 @@
 
 | Компонент | Роль | Тип запуска |
 |---|---|---|
-| **1С 8.3+** (реализовано на 8.5.1.1302) | Источник справочных данных (собственный HTTP-сервис) | Вне Docker, на хосте |
+| **1С 8.5.1.1302 Community** | Источник справочных данных (собственный HTTP-сервис); совместимость артефакта с 8.3 не заявляется | Вне Docker, на хосте |
 | **integration-service** | Producer: читает 1С, публикует события в Kafka | CLI, разовый запуск (`full`/`incremental`) |
 | **Kafka (KRaft)** | Шина данных / event streaming layer | Демон в Docker |
 | **consumer-service** | Consumer: читает Kafka, upsert в PostgreSQL | Демон в Docker |

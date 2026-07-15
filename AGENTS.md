@@ -26,7 +26,7 @@ upsert и мягким удалением.
 
 | Решение | Выбор | Причина |
 |---|---|---|
-| Источник 1С | **Реальная 1С:Предприятие 8.3+** (проверено на 8.5.1.1302 community). | Приоритетный вариант по ТЗ. |
+| Источник 1С | **Реальная 1С:Предприятие 8.5.1.1302 Community**. | Доступная и проверенная end-to-end среда; совместимость артефакта с 8.3 не заявляется. |
 | Абстракция источника | **Да.** Интерфейс `Source` → `OneCHttpSource` + `MockSource`. | Контур Kafka→PG воспроизводим даже без запущенной 1С (демо/CI). |
 | Язык сервисов | **Python 3.12** | Быстро, читаемо, зрелые библиотеки. |
 | Запись в PG | **Собственный consumer-service** (Вариант А ТЗ) | Больше контроля: consumer group, upsert, retry, DLQ, транзакции. |
@@ -40,7 +40,7 @@ upsert и мягким удалением.
 
 ```
 ┌──────────┐  HTTP/OData   ┌─────────────────────┐  produce  ┌─────────┐  consume  ┌──────────────────┐  upsert  ┌────────────┐
-│  1С 8.3+ │ ─────────────▶│ integration-service │ ─────────▶│  Kafka  │ ─────────▶│ consumer-service │ ────────▶│ PostgreSQL │
+│  1С 8.5  │ ─────────────▶│ integration-service │ ─────────▶│  Kafka  │ ─────────▶│ consumer-service │ ────────▶│ PostgreSQL │
 │ (Windows)│  справочники  │     (producer)      │  события  │ (KRaft) │  события  │   (consumer)     │ ON CONFLICT│           │
 └──────────┘               └─────────────────────┘           └─────────┘           └──────────────────┘          └────────────┘
                                     │                              │                        │
@@ -294,9 +294,9 @@ consumer restarts=0, DLQ пуст.
   фильтра); `ISOВДату` — устойчивый парс RFC3339 (первые 14 цифр); `inn/kpp`
   пустые строки → `null` (единообразие с mock).
 - **unit-тесты**: integration + consumer, запуск одной командой `make test`.
-- **docs/README/AGENTS**: `configuration.dt`→`.cf`; версия 1С «8.3+ (реализовано
-  на 8.5.1.1302)»; основной demo — на реальной 1С, mock как fallback; убрано
-  устаревшее про `host.docker.internal`; в limitations добавлены seed create-only,
+- **docs/README/AGENTS**: `configuration.dt`→`.cf`; версия 1С 8.5.1.1302;
+  основной demo — на реальной 1С, mock как fallback; убрано
+  устаревшее про `host.docker.internal`; в limitations описана семантика seed,
   fallback GUID формы, версия 8.5, сеть Docker.
 - **04_postgresql-data.txt**: пересоздан в корректном UTF-8 (без mojibake).
 

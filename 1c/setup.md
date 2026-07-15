@@ -63,7 +63,7 @@
 | GET  | `/ownership-forms?changed_since=<RFC3339>` | Только изменённые |
 | GET  | `/counterparties` | Все контрагенты (JSON) |
 | GET  | `/counterparties?changed_since=<RFC3339>` | Только изменённые |
-| POST | `/seed` | Засеять демо-данные (идемпотентно): 4 формы + 5 контрагентов |
+| POST | `/seed` | Восстановить эталонные demo-данные: 4 формы + 5 контрагентов, снять их пометки удаления |
 | POST | `/touch?id=<guid>&name=<...>` | Изменить контрагента (двигает `ДатаИзменения`) |
 | POST | `/delete?id=<guid>` | Пометить контрагента на удаление |
 
@@ -175,7 +175,8 @@ docker compose exec integration-service python -m integration sync full
 # 3) повторный full -> без дублей (upsert ON CONFLICT)
 
 # 4) изменить контрагента и синхронизировать инкрементально
-Invoke-WebRequest "$B/touch?id=<guid>&name=ООО Ромашка (обновлено)" -Method POST
+$Name = [uri]::EscapeDataString('ООО Ромашка (обновлено)')
+Invoke-WebRequest "$B/touch?id=<guid>&name=$Name" -Method POST
 docker compose exec integration-service python -m integration sync incremental
 #   -> запись обновлена
 
