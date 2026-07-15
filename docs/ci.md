@@ -34,9 +34,9 @@ docker compose down -v --remove-orphans
 Workflow имеет минимальные права `contents: read`, отменяет устаревшие запуски
 той же ветки через `concurrency` и всегда удаляет compose volumes после теста.
 
-Отдельный `security.yml` проверяет полную Git-историю через Gitleaks и выполняет
-CodeQL-анализ Python. Dependabot еженедельно проверяет uv/Python dependencies и
-GitHub Actions. Все внешние actions закреплены полными commit SHA.
+CI проверяет полную Git-историю через Gitleaks и выполняет CodeQL-анализ Python.
+Dependabot еженедельно проверяет uv/Python dependencies и GitHub Actions. Все
+внешние actions закреплены полными commit SHA.
 
 ## GitHub Container Registry
 
