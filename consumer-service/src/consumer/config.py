@@ -1,4 +1,5 @@
 """Конфигурация consumer-service из переменных окружения."""
+
 from __future__ import annotations
 
 import os
@@ -18,7 +19,7 @@ class Config:
     health_port: int
 
     @staticmethod
-    def from_env() -> "Config":
+    def from_env() -> Config:
         topics = [
             t.strip()
             for t in os.getenv("KAFKA_TOPICS", "1c.ownership_forms.v1,1c.counterparties.v1").split(",")

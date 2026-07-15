@@ -28,7 +28,9 @@ wait_for_sql() {
 }
 
 wait_for_health() {
-  for _ in $(seq 1 60); do
+  # A fresh single-node Kafka can take longer to initialize its group
+  # coordinator on slower CI runners.
+  for _ in $(seq 1 90); do
     if docker compose exec -T integration-service python -c \
       'import httpx; r=httpx.get("http://consumer-service:8081/health", timeout=5); r.raise_for_status(); p=r.json(); assert p["ready"] and p["db_ok"] and p["kafka_ok"] and p["messages_dlq"] == 0' \
       >/dev/null 2>&1; then

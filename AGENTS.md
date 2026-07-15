@@ -64,7 +64,7 @@ upsert и мягким удалением.
 1c-kafka-postgres/
 ├── AGENTS.md                 # этот файл
 ├── README.md                 # инструкция (11 пунктов ТЗ + демо-сценарий)
-├── docker-compose.yml
+├── compose.yaml
 ├── Makefile                  # sync-full, sync-incremental, up, down, logs, psql
 ├── .env.example
 ├── migrations/               # SQL-миграции (нумерованные)
@@ -202,7 +202,7 @@ make down               # остановить
 
 - [x] Изучено ТЗ, согласована архитектура и решения с пользователем.
 - [x] Создана структура проекта, начат AGENTS.md.
-- [x] docker-compose.yml
+- [x] compose.yaml
 - [x] migrations/
 - [x] integration-service (source abstraction, producer, full/incremental)
 - [x] consumer-service (upsert, retry, DLQ, /health)
@@ -281,7 +281,7 @@ consumer restarts=0, DLQ пуст.
 - **producer.flush()**: `remaining>0` теперь считается ошибкой доставки —
   incremental не двигает watermark при недоставке в Kafka (защита от потери данных).
 - **ONEC_BASE_URL**: неявный сетевой дефолт убран из `.env.example`,
-  `docker-compose.yml`, `config.py` → явный placeholder `<HOST_IPV4>`;
+  `compose.yaml`, `config.py` → явный placeholder `<HOST_IPV4>`;
   документация описывает `host.docker.internal` и fallback на IPv4 при 502.
 - **consumer DLQ**: `DlqProducer.send()` дожидается подтверждения доставки и
   возвращает bool; offset коммитится только для подтверждённых в DLQ сообщений.
@@ -330,6 +330,12 @@ consumer restarts=0, DLQ пуст.
 - Добавлен GitHub Actions CI: unit matrix + Docker Compose integration smoke на
   mock-источнике; live 1С проверяется ручным workflow на self-hosted Windows
   runner. Настройка описана в `docs/ci.md`.
+- В ветке `quality-culture` добавлен инженерный quality gate: отдельные `uv.lock`,
+  Ruff ALL, ty, prek, justfile, whitelist ignore, multi-stage Dockerfile и сборка
+  production targets. После успешного CI в `main` образы публикуются в GHCR.
+- Проверено в `quality-culture`: Ruff/ty/prek clean, unit `14 + 18`, live 1С
+  `4 passed`, чистый Compose mock smoke passed, production targets собираются и
+  работают non-root без dev-зависимостей, consumer lag `0`, DLQ `0`.
 
 ---
 
@@ -352,6 +358,7 @@ consumer restarts=0, DLQ пуст.
 4. Изменение контрагента → `sync-incremental` → UPDATE записи.
 5. Пометка удаления → `deleted=true` в PG.
 
-Обязательные артефакты сдачи (раздел 12 ТЗ): `docker-compose.yml`, `README.md`,
+Обязательные артефакты сдачи (раздел 12 ТЗ): `compose.yaml` (современное имя
+Compose-файла), `README.md`,
 `.env.example`, `migrations/`, `integration-service/`, `consumer-service/`, `sql/`,
 `docs/`, `1c/` (configuration.cf + src/ + screenshots/ + setup.md).

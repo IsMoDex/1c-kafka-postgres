@@ -134,9 +134,12 @@ services:
   # consumer-service — читает Kafka, пишет в PostgreSQL (upsert)
   # ────────────────────────────────────────────────────────────────────────
   consumer-service:
+    image: ${CONSUMER_IMAGE:-1c-kafka-postgres-consumer-service:local}
     build:
       context: ./consumer-service
+      target: test
     container_name: rh-consumer
+    init: true
     restart: unless-stopped
     depends_on:
       kafka:
@@ -172,9 +175,12 @@ services:
   # По умолчанию простаивает; синхронизацию запускаем командой (см. Makefile).
   # ────────────────────────────────────────────────────────────────────────
   integration-service:
+    image: ${INTEGRATION_IMAGE:-1c-kafka-postgres-integration-service:local}
     build:
       context: ./integration-service
+      target: test
     container_name: rh-integration
+    init: true
     depends_on:
       kafka:
         condition: service_healthy

@@ -1,14 +1,18 @@
-"""Лёгкий HTTP-сервер healthcheck (/health) на stdlib.
+"""
+Лёгкий HTTP-сервер healthcheck (/health) на stdlib.
 
 Запускается в отдельном потоке. Возвращает 200, если consumer жив и последняя
 проверка соединения с PostgreSQL успешна; иначе 503.
 """
+
 from __future__ import annotations
 
 import json
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+_HEARTBEAT_MAX_AGE_SECONDS = 30
 
 
 class HealthState:
@@ -18,8 +22,8 @@ class HealthState:
         self.ready = False
         self.db_ok = False
         self.kafka_ok = False
-        self.rows_processed = 0          # применённых строк upsert
-        self.messages_processed = 0      # обработанных Kafka-сообщений
+        self.rows_processed = 0  # применённых строк upsert
+        self.messages_processed = 0  # обработанных Kafka-сообщений
         self.messages_dlq = 0
         self.last_error: str | None = None
         self.last_kafka_error: str | None = None
@@ -35,7 +39,7 @@ class HealthState:
         self.last_kafka_error = None
         self.last_kafka_ok_at = time.time()
 
-    def snapshot(self) -> dict:
+    def snapshot(self) -> dict[str, object]:
         return {
             "ready": self.ready,
             "db_ok": self.db_ok,
@@ -51,14 +55,14 @@ class HealthState:
 
     def healthy(self) -> bool:
         now = time.time()
-        db_fresh = self.last_db_ok_at is not None and now - self.last_db_ok_at < 30
-        kafka_fresh = self.last_kafka_ok_at is not None and now - self.last_kafka_ok_at < 30
+        db_fresh = self.last_db_ok_at is not None and now - self.last_db_ok_at < _HEARTBEAT_MAX_AGE_SECONDS
+        kafka_fresh = self.last_kafka_ok_at is not None and now - self.last_kafka_ok_at < _HEARTBEAT_MAX_AGE_SECONDS
         return self.ready and self.db_ok and self.kafka_ok and db_fresh and kafka_fresh
 
 
 def start_health_server(port: int, state: HealthState) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
             if self.path.rstrip("/") in ("/health", "/healthz", ""):
                 payload = state.snapshot()
                 code = 200 if state.healthy() else 503
@@ -72,10 +76,13 @@ def start_health_server(port: int, state: HealthState) -> ThreadingHTTPServer:
                 self.send_response(404)
                 self.end_headers()
 
-        def log_message(self, format, *args) -> None:  # noqa: A002 — заглушаем лог
-            return
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002 -- stdlib override name.
+            del format, args
 
-    server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+    server = ThreadingHTTPServer(
+        ("0.0.0.0", port),  # noqa: S104 -- container health endpoint must be reachable outside localhost.
+        Handler,
+    )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server

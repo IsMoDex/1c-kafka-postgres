@@ -1,4 +1,5 @@
 """Health должен отражать свежесть реальных проверок зависимостей."""
+
 from __future__ import annotations
 
 import time
@@ -8,7 +9,7 @@ from consumer.health import HealthState
 from consumer.worker import Worker
 
 
-def test_health_requires_fresh_db_and_kafka_heartbeats():
+def test_health_requires_fresh_db_and_kafka_heartbeats() -> None:
     state = HealthState()
     state.ready = True
     state.mark_db_ok()
@@ -20,7 +21,7 @@ def test_health_requires_fresh_db_and_kafka_heartbeats():
     assert state.healthy() is False
 
 
-def test_kafka_probe_controls_health_instead_of_idle_poll():
+def test_kafka_probe_controls_health_instead_of_idle_poll() -> None:
     worker = object.__new__(Worker)
     worker._health = HealthState()
     worker._consumer = Mock()

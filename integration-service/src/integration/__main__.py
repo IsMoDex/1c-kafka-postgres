@@ -1,4 +1,5 @@
-"""CLI integration-service (typer).
+"""
+CLI integration-service (typer).
 
 Команды:
   sync full           — полная синхронизация
@@ -11,18 +12,21 @@
   python -m integration sync incremental
   docker compose exec integration-service python -m integration sync full
 """
+
 from __future__ import annotations
 
-import sys
+from typing import TYPE_CHECKING
 
 import typer
 
 from integration.config import Config
 from integration.logging_setup import configure_logging
-from integration.sources.base import Source
 from integration.sources.mock import MockSource
 from integration.sources.onec_http import OneCHttpSource
 from integration.sync import Synchronizer
+
+if TYPE_CHECKING:
+    from integration.sources.base import Source
 
 app = typer.Typer(add_completion=False, help="Producer 1С → Kafka")
 sync_app = typer.Typer(help="Синхронизация справочников")
@@ -39,12 +43,13 @@ def _build_source(cfg: Config) -> Source:
         return MockSource()
     if cfg.source_type == "onec":
         if "HOST_IPV4_NOT_SET" in cfg.onec_base_url or "<HOST_IPV4>" in cfg.onec_base_url:
-            raise typer.BadParameter(
+            message = (
                 "Для SOURCE_TYPE=onec замените placeholder в ONEC_BASE_URL. "
                 "Используйте http://host.docker.internal/roshim/hs/integration; "
                 "если Docker Desktop возвращает 502, укажите реальный IPv4 хоста, "
                 "например http://172.23.128.1/roshim/hs/integration."
             )
+            raise typer.BadParameter(message)
         log.info("source_selected", type="onec", base_url=cfg.onec_base_url)
         return OneCHttpSource(
             base_url=cfg.onec_base_url,
@@ -55,7 +60,8 @@ def _build_source(cfg: Config) -> Source:
             retries=cfg.onec_http_retries,
             page_size=cfg.onec_page_size,
         )
-    raise typer.BadParameter(f"Неизвестный SOURCE_TYPE={cfg.source_type!r} (ожидается mock|onec)")
+    message = f"Неизвестный SOURCE_TYPE={cfg.source_type!r} (ожидается mock|onec)"
+    raise typer.BadParameter(message)
 
 
 def _run(mode: str) -> None:
@@ -63,10 +69,10 @@ def _run(mode: str) -> None:
     source = _build_source(cfg)
     try:
         Synchronizer(cfg, source).run(mode)
-    except Exception as exc:  # noqa: BLE001 — логируем и корректно падаем
-        log.error("sync_error", mode=mode, error=str(exc), exc_info=True)
+    except Exception as exc:
+        log.exception("sync_error", mode=mode, error=str(exc))
         source.close()
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
     source.close()
 
 
@@ -85,7 +91,7 @@ def sync_incremental() -> None:
 @demo_app.command("touch")
 def demo_touch(
     cp_id: str = typer.Argument(..., help="GUID контрагента"),
-    name: str = typer.Option(None, help="Новое наименование"),
+    name: str | None = typer.Option(None, help="Новое наименование"),
 ) -> None:
     """Изменить контрагента в mock-источнике (обновляет updated_at)."""
     src = MockSource()

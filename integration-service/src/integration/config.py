@@ -1,7 +1,9 @@
-"""Конфигурация integration-service из переменных окружения.
+"""
+Конфигурация integration-service из переменных окружения.
 
 Секреты (пароли, DSN) никогда не хранятся в коде — только в ENV/.env.
 """
+
 from __future__ import annotations
 
 import os
@@ -30,7 +32,7 @@ class Config:
     fk_barrier_timeout: float
 
     @staticmethod
-    def from_env() -> "Config":
+    def from_env() -> Config:
         return Config(
             kafka_bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
             topic_ownership_forms=os.getenv("TOPIC_OWNERSHIP_FORMS", "1c.ownership_forms.v1"),

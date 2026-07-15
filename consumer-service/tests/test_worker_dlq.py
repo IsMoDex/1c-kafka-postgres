@@ -1,4 +1,5 @@
 """Регрессии безопасности offset commit при сбое доставки в DLQ."""
+
 from __future__ import annotations
 
 import json

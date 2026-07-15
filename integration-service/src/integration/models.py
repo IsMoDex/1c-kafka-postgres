@@ -1,42 +1,47 @@
-"""Pydantic-модели: доменные записи справочников и событийный конверт Kafka.
+"""
+Pydantic-модели: доменные записи справочников и событийный конверт Kafka.
 
 Формат события соответствует ТЗ:
     { event_id, event_type, source, occurred_at, payload }
 """
+
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from typing import Literal, Optional
+from datetime import UTC, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ── Доменные записи (payload) ───────────────────────────────────────────────
 
+
 class OwnershipForm(BaseModel):
     """Форма собственности (справочник 1С)."""
+
     id: str
-    code: Optional[str] = None
+    code: str | None = None
     name: str
     deleted: bool = False
-    updated_at: Optional[datetime] = None
+    updated_at: datetime | None = None
 
 
 class Counterparty(BaseModel):
     """Контрагент (справочник 1С)."""
+
     id: str  # GUID в строковом виде
-    code: Optional[str] = None
+    code: str | None = None
     name: str
-    inn: Optional[str] = None
-    kpp: Optional[str] = None
-    ownership_form_id: Optional[str] = None
+    inn: str | None = None
+    kpp: str | None = None
+    ownership_form_id: str | None = None
     deleted: bool = False
-    updated_at: Optional[datetime] = None
+    updated_at: datetime | None = None
 
 
 # ── Событийный конверт (envelope) ────────────────────────────────────────────
@@ -51,6 +56,7 @@ EventType = Literal[
 
 class Event(BaseModel):
     """Событие Kafka. Стабильный конверт вокруг payload справочника."""
+
     event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     event_type: EventType
     source: str = "1c"

@@ -5,11 +5,14 @@
 Workflow `.github/workflows/ci.yml` запускается для каждого push в `main`, pull
 request и вручную через `workflow_dispatch`.
 
-Он содержит три обязательные проверки:
+Он содержит следующие обязательные проверки:
 
-1. `Unit tests (integration-service)` — 14 unit/component тестов producer-а.
-2. `Unit tests (consumer-service)` — 18 unit/component тестов consumer-а.
-3. `Compose integration` — настоящий Docker Compose контур с Kafka,
+1. `Quality (integration-service)` — Ruff format, Ruff lint и ty.
+2. `Quality (consumer-service)` — Ruff format, Ruff lint и ty.
+3. `Unit tests (integration-service)` — 14 unit/component тестов producer-а.
+4. `Unit tests (consumer-service)` — 18 unit/component тестов consumer-а.
+5. `Production image (*)` — сборка чистого multi-stage target `prod`.
+6. `Compose integration` — настоящий Docker Compose контур с Kafka,
    PostgreSQL, integration-service и consumer-service. В GitHub-hosted runner
    используется воспроизводимый `SOURCE_TYPE=mock`, потому что 1С нельзя
    установить на стандартный Ubuntu runner.
@@ -26,6 +29,21 @@ docker compose down -v --remove-orphans
 
 Workflow имеет минимальные права `contents: read`, отменяет устаревшие запуски
 той же ветки через `concurrency` и всегда удаляет compose volumes после теста.
+
+## GitHub Container Registry
+
+Workflow `.github/workflows/publish-images.yml` запускается только после
+успешного завершения `CI` в ветке `main` и публикует target `prod`:
+
+```text
+ghcr.io/ismodex/1c-kafka-postgres-integration-service
+ghcr.io/ismodex/1c-kafka-postgres-consumer-service
+```
+
+Каждый образ получает immutable tag с SHA исходного коммита и tag `latest`.
+Workflow использует встроенный `GITHUB_TOKEN`, permission `packages: write`,
+BuildKit cache, provenance attestation и SBOM. Тестовые зависимости в эти образы
+не попадают.
 
 ## Интеграция с реальной 1С
 
@@ -70,6 +88,10 @@ Live tests временно меняют имя контрагента `000001`,
 
 - `Unit tests (integration-service)`;
 - `Unit tests (consumer-service)`;
+- `Quality (integration-service)`;
+- `Quality (consumer-service)`;
+- `Production image (integration-service)`;
+- `Production image (consumer-service)`;
 - `Compose integration`.
 
 Live 1C workflow не следует делать обязательным для каждого pull request: он

@@ -1,4 +1,5 @@
-"""Ядро consumer-service: consumer group → батч → транзакционный upsert → commit.
+"""
+Ядро consumer-service: consumer group → батч → транзакционный upsert → commit.
 
 Гарантии и поведение:
   * consumer group, ручной commit offset ТОЛЬКО после успешной записи (at-least-once);
@@ -8,19 +9,24 @@
   * poison-сообщения (невалидный JSON, устойчивый FK-конфликт) → DLQ, offset двигается;
   * порядок применения: формы собственности раньше контрагентов (FK).
 """
+
 from __future__ import annotations
 
 import signal
 import time
-from typing import Optional
+from typing import TYPE_CHECKING, cast
 
 import structlog
-from confluent_kafka import Consumer, KafkaError, KafkaException, Producer, TopicPartition
+from confluent_kafka import Consumer, KafkaError, KafkaException, Message, Producer, TopicPartition
 
 from consumer.config import Config
 from consumer.db import Database
-from consumer.health import HealthState
+from consumer.health import HealthState, start_health_server
+from consumer.logging_setup import configure_logging
 from consumer.models import Entity, ParsedEvent, parse_event
+
+if TYPE_CHECKING:
+    from types import FrameType
 
 log = structlog.get_logger()
 
@@ -40,23 +46,24 @@ class DlqProducer:
             }
         )
 
-    def send(
-        self, source_topic: str, key: Optional[bytes], value: Optional[bytes], reason: str
-    ) -> bool:
-        """Отправляет сообщение в DLQ и ДОЖИДАЕТСЯ подтверждения доставки.
+    def send(self, source_topic: str, key: bytes | None, value: bytes | None, reason: str) -> bool:
+        """
+        Отправляет сообщение в DLQ и ДОЖИДАЕТСЯ подтверждения доставки.
 
         Возвращает True только если брокер подтвердил запись. При ошибке или
         таймауте возвращает False — вызывающий код НЕ должен коммитить offset
         такого сообщения, иначе poison-сообщение будет потеряно.
         """
         dlq_topic = f"{source_topic}{self._suffix}"
-        delivered = {"ok": False, "err": None}
+        delivered = False
+        delivery_error: str | None = None
 
-        def _on_delivery(err, _msg) -> None:
+        def _on_delivery(err: KafkaError | None, _msg: Message) -> None:
+            nonlocal delivered, delivery_error
             if err is None:
-                delivered["ok"] = True
+                delivered = True
             else:
-                delivered["err"] = str(err)
+                delivery_error = str(err)
 
         try:
             self._producer.produce(
@@ -68,15 +75,15 @@ class DlqProducer:
             )
             remaining = self._producer.flush(10)
         except (BufferError, KafkaException) as exc:
-            log.error("dlq_produce_failed", topic=dlq_topic, error=str(exc))
+            log.exception("dlq_produce_failed", topic=dlq_topic, error=str(exc))
             return False
 
-        if remaining > 0 or not delivered["ok"]:
+        if remaining > 0 or not delivered:
             log.error(
                 "dlq_delivery_failed",
                 topic=dlq_topic,
                 remaining=remaining,
-                error=delivered["err"],
+                error=delivery_error,
             )
             return False
 
@@ -94,7 +101,7 @@ class Worker:
             {
                 "bootstrap.servers": config.kafka_bootstrap_servers,
                 "group.id": config.consumer_group,
-                "enable.auto.commit": False,          # ручной commit после записи
+                "enable.auto.commit": False,  # ручной commit после записи
                 "auto.offset.reset": "earliest",
                 "partition.assignment.strategy": "cooperative-sticky",
                 "client.id": "consumer-service",
@@ -105,7 +112,7 @@ class Worker:
         if self._db.ping():
             self._health.mark_db_ok()
 
-    def stop(self, *_) -> None:
+    def stop(self, _signum: int, _frame: FrameType | None) -> None:
         log.info("shutdown_signal_received")
         self._running = False
 
@@ -135,8 +142,8 @@ class Worker:
             self._shutdown()
 
     # ── сбор батча ────────────────────────────────────────────────────────
-    def _poll_batch(self) -> list:
-        batch: list = []
+    def _poll_batch(self) -> list[Message]:
+        batch: list[Message] = []
         deadline = time.monotonic() + self._cfg.batch_max_seconds
         while self._running and len(batch) < self._cfg.batch_max_messages:
             remaining = deadline - time.monotonic()
@@ -147,9 +154,9 @@ class Worker:
                 if batch:
                     break
                 continue
-            if msg.error():
-                err = msg.error()
-                if err.code() == KafkaError._PARTITION_EOF:
+            err = msg.error()
+            if err is not None:
+                if err.code() == KafkaError._PARTITION_EOF:  # noqa: SLF001 -- documented confluent-kafka EOF code.
                     continue
                 # Транзиентные ошибки (топик ещё не прогрузился брокером,
                 # ребаланс и т.п.) — логируем и продолжаем, не роняя сервис.
@@ -172,25 +179,25 @@ class Worker:
         try:
             self._consumer.list_topics(timeout=2)
             self._health.mark_kafka_ok()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 -- probe failures of any origin must only affect health state.
             self._health.kafka_ok = False
             self._health.last_kafka_error = str(exc)
             log.warning("kafka_probe_failed", error=str(exc))
 
     # ── обработка батча ─────────────────────────────────────────────────────
-    def _process_batch(self, batch: list) -> None:
-        ownership_rows: list[dict] = []
-        counterparty_rows: list[dict] = []
-        poison: list[tuple] = []  # (msg, reason)
+    def _process_batch(self, batch: list[Message]) -> None:
+        ownership_rows: list[dict[str, object]] = []
+        counterparty_rows: list[dict[str, object]] = []
+        poison: list[tuple[Message, str]] = []
 
         for msg in batch:
             try:
-                event: ParsedEvent = parse_event(msg.value())
+                event: ParsedEvent = parse_event(cast("bytes", msg.value()))
                 if event.entity == Entity.OWNERSHIP_FORM:
                     ownership_rows.append(event.ownership_form_row())
                 else:
                     counterparty_rows.append(event.counterparty_row())
-            except Exception as exc:  # noqa: BLE001 — невалидное сообщение → DLQ
+            except Exception as exc:  # noqa: BLE001 -- any malformed message must be isolated in DLQ.
                 poison.append((msg, f"parse_error: {exc}"))
 
         # Ядовитые сообщения — сразу в DLQ. Если хотя бы одна DLQ-доставка не
@@ -199,7 +206,7 @@ class Worker:
         # проблемное сообщение и нарушит at-least-once.
         dlq_failed = False
         for msg, reason in poison:
-            if self._dlq.send(msg.topic(), msg.key(), msg.value(), reason):
+            if self._dlq.send(cast("str", msg.topic()), msg.key(), msg.value(), reason):
                 self._health.messages_dlq += 1
                 self._health.last_error = reason
             else:
@@ -217,7 +224,12 @@ class Worker:
             # Только poison, весь DLQ подтверждён — коммитим, чтобы не зациклиться.
             self._commit(batch)
 
-    def _write_with_retry(self, batch: list, of_rows: list[dict], cp_rows: list[dict]) -> None:
+    def _write_with_retry(
+        self,
+        batch: list[Message],
+        of_rows: list[dict[str, object]],
+        cp_rows: list[dict[str, object]],
+    ) -> None:
         attempt = 0
         while True:
             attempt += 1
@@ -225,22 +237,25 @@ class Worker:
                 self._db.apply_batch(of_rows, cp_rows)
                 self._health.mark_db_ok()
                 break
-            except Exception as exc:  # noqa: BLE001
+            # Retry and DLQ must cover every transactional failure from the database layer.
+            except Exception as exc:
                 if self._db.ping():
                     self._health.mark_db_ok()
                 else:
                     self._health.db_ok = False
                 self._health.last_error = str(exc)
-                log.error("batch_write_failed", attempt=attempt, error=str(exc))
+                log.exception("batch_write_failed", attempt=attempt, error=str(exc))
                 if attempt > self._cfg.max_retries:
                     # Исчерпали попытки — весь батч в DLQ. Offset-ы коммитим
                     # только если брокер подтвердил ВСЕ сообщения: частичный
                     # commit может перескочить через gap внутри партиции.
-                    log.error("batch_exhausted_retries", messages=len(batch))
+                    log.exception("batch_exhausted_retries", messages=len(batch))
                     all_delivered = True
                     for msg in batch:
                         if self._dlq.send(
-                            msg.topic(), msg.key(), msg.value(),
+                            cast("str", msg.topic()),
+                            msg.key(),
+                            msg.value(),
                             f"db_write_failed_after_retries: {exc}",
                         ):
                             self._health.messages_dlq += 1
@@ -249,18 +264,19 @@ class Worker:
                     if all_delivered:
                         self._commit(batch)
                     else:
-                        log.error("batch_not_committed_due_to_dlq_failure", messages=len(batch))
+                        log.exception("batch_not_committed_due_to_dlq_failure", messages=len(batch))
                         self._rewind(batch)
                     return
-                time.sleep(min(2 ** attempt, 30))
+                time.sleep(min(2**attempt, 30))
 
         try:
             self._commit(batch)
             self._health.mark_kafka_ok()
-        except Exception as exc:  # noqa: BLE001
+        # Any failed commit must rewind the locally advanced consumer position.
+        except Exception as exc:
             self._health.kafka_ok = False
             self._health.last_kafka_error = str(exc)
-            log.error("kafka_commit_failed", error=str(exc), messages=len(batch))
+            log.exception("kafka_commit_failed", error=str(exc), messages=len(batch))
             self._rewind(batch)
             return
 
@@ -274,8 +290,9 @@ class Worker:
             messages=len(batch),
         )
 
-    def _rewind(self, batch: list) -> None:
-        """Возвращает consumer к началу batch после неподтверждённой DLQ-доставки.
+    def _rewind(self, batch: list[Message]) -> None:
+        """
+        Возвращает consumer к началу batch после неподтверждённой DLQ-доставки.
 
         Отсутствия commit недостаточно: poll уже передвинул локальную позицию.
         Seek обязателен для всех partition batch, иначе последующий commit может
@@ -283,20 +300,21 @@ class Worker:
         """
         min_offsets: dict[tuple[str, int], int] = {}
         for msg in batch:
-            key = (msg.topic(), msg.partition())
-            offset = int(msg.offset())
+            key = (cast("str", msg.topic()), cast("int", msg.partition()))
+            offset = cast("int", msg.offset())
             min_offsets[key] = min(offset, min_offsets.get(key, offset))
         for (topic, partition), offset in min_offsets.items():
             self._consumer.seek(TopicPartition(topic, partition, offset))
         log.warning("batch_rewound", partitions=len(min_offsets), messages=len(batch))
 
-    def _commit(self, batch: list) -> None:
+    def _commit(self, batch: list[Message]) -> None:
         """Коммитим максимальный offset+1 по каждой (topic, partition) батча."""
         max_offsets: dict[tuple[str, int], int] = {}
         for msg in batch:
-            key = (msg.topic(), msg.partition())
-            if msg.offset() > max_offsets.get(key, -1):
-                max_offsets[key] = msg.offset()
+            key = (cast("str", msg.topic()), cast("int", msg.partition()))
+            offset = cast("int", msg.offset())
+            if offset > max_offsets.get(key, -1):
+                max_offsets[key] = offset
         tps = [TopicPartition(t, p, off + 1) for (t, p), off in max_offsets.items()]
         self._consumer.commit(offsets=tps, asynchronous=False)
 
@@ -310,13 +328,9 @@ class Worker:
 
 
 def main() -> None:
-    from consumer.logging_setup import configure_logging
-
     configure_logging("consumer-service")
     cfg = Config.from_env()
     health = HealthState()
-
-    from consumer.health import start_health_server
 
     start_health_server(cfg.health_port, health)
 

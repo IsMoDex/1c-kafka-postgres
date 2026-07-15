@@ -1,14 +1,19 @@
 """Retry и pagination HTTP-источника 1С."""
+
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
 import httpx
 
 from integration.sources.onec_http import OneCHttpSource
 
+if TYPE_CHECKING:
+    import pytest
 
-def test_retryable_http_error_is_retried(monkeypatch):
+
+def test_retryable_http_error_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
     request = httpx.Request("GET", "http://onec.test/counterparties")
     client = Mock()
     client.get.side_effect = [
@@ -24,7 +29,7 @@ def test_retryable_http_error_is_retried(monkeypatch):
     assert client.get.call_count == 2
 
 
-def test_get_all_reads_pages_until_short_page():
+def test_get_all_reads_pages_until_short_page() -> None:
     source = object.__new__(OneCHttpSource)
     source._page_size = 1
     source._get = Mock(side_effect=[[{"id": "a"}], [{"id": "b"}], []])

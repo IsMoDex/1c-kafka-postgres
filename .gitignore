@@ -1,26 +1,76 @@
-# Секреты и локальная конфигурация
+# Whitelist: new files are ignored until their path and type are allowed below.
+*
+
+# GitHub configuration.
+!/.github/
+!/.github/**/
+!/.github/**/*.yml
+!/.github/**/*.yaml
+
+# 1C source and review artifacts.
+!/1c/
+!/1c/**/
+!/1c/**/*.bsl
+!/1c/**/*.xml
+!/1c/screenshots/*.json
+!/1c/screenshots/*.md
+!/1c/screenshots/*.txt
+!/1c/configuration.cf
+!/1c/setup.md
+
+# Independent Python services.
+!/consumer-service/
+!/consumer-service/**/
+!/consumer-service/**/*.py
+!/consumer-service/.dockerignore
+!/consumer-service/.python-version
+!/consumer-service/Dockerfile
+!/consumer-service/pyproject.toml
+!/consumer-service/uv.lock
+
+!/integration-service/
+!/integration-service/**/
+!/integration-service/**/*.py
+!/integration-service/.dockerignore
+!/integration-service/.python-version
+!/integration-service/Dockerfile
+!/integration-service/pyproject.toml
+!/integration-service/uv.lock
+
+# Documentation, SQL, and automation.
+!/docs/
+!/docs/**/
+!/docs/**/*.md
+!/migrations/
+!/migrations/*.sql
+!/scripts/
+!/scripts/*.sh
+!/sql/
+!/sql/*.sql
+
+# Explicit root files.
+!/.env.example
+!/.gitattributes
+!/.gitignore
+!/AGENTS.md
+!/compose.yaml
+!/justfile
+!/Makefile
+!/make.ps1
+!/prek.toml
+!/README.md
+
+# Generated and local files inside allowed directories.
 .env
-
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-venv/
-.mypy_cache/
-.pytest_cache/
-.ruff_cache/
-
-# Состояние mock-источника
-mock_state.json
-/data/
-
-# IDE / OS
-.idea/
-.vscode/
-.DS_Store
-Thumbs.db
-
-# 1С временные (актуальный configuration.cf сохраняется вручную)
+**/.coverage
+**/.pytest_cache/
+**/.ruff_cache/
+**/.ty_cache/
+**/.venv/
+**/__pycache__/
+**/*.egg-info/
+**/*.py[cod]
 1c/*.1CD
 1c/cache/
+mock_state.json
+/data/

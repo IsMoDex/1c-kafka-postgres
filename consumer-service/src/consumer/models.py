@@ -1,31 +1,32 @@
 """Строгая валидация Kafka-событий и преобразование payload в строки БД."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
-from enum import Enum
 import re
-from typing import Annotated, Any, Literal
-from uuid import UUID
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import TYPE_CHECKING, Annotated, Any, Literal
+from uuid import UUID  # noqa: TC003 -- Pydantic evaluates model field annotations at runtime.
 
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, StrictBool, ValidationError
 
+if TYPE_CHECKING:
+    from datetime import datetime
 
-_RFC3339_RE = re.compile(
-    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
-)
+_RFC3339_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$")
 
 
-def _require_rfc3339(value: Any) -> Any:
+def _require_rfc3339(value: object) -> object:
     if not isinstance(value, str) or _RFC3339_RE.fullmatch(value) is None:
-        raise ValueError("Ожидается RFC3339 datetime с timezone")
+        message = "Ожидается RFC3339 datetime с timezone"
+        raise ValueError(message)
     return value
 
 
 Rfc3339DateTime = Annotated[AwareDatetime, BeforeValidator(_require_rfc3339)]
 
 
-class Entity(str, Enum):
+class Entity(StrEnum):
     OWNERSHIP_FORM = "ownership_form"
     COUNTERPARTY = "counterparty"
 
@@ -85,9 +86,10 @@ class ParsedEvent:
             return Entity.OWNERSHIP_FORM
         return Entity.COUNTERPARTY
 
-    def ownership_form_row(self) -> dict[str, Any]:
+    def ownership_form_row(self) -> dict[str, object]:
         if not isinstance(self.payload, OwnershipFormPayload):
-            raise ValueError("Payload контрагента нельзя преобразовать в ownership_form")
+            message = "Payload контрагента нельзя преобразовать в ownership_form"
+            raise ValueError(message)  # noqa: TRY004 -- retain the established ValueError API.
         p = self.payload
         return {
             "id": str(p.id),
@@ -97,9 +99,10 @@ class ParsedEvent:
             "deleted": p.deleted,
         }
 
-    def counterparty_row(self) -> dict[str, Any]:
+    def counterparty_row(self) -> dict[str, object]:
         if not isinstance(self.payload, CounterpartyPayload):
-            raise ValueError("Payload формы нельзя преобразовать в counterparty")
+            message = "Payload формы нельзя преобразовать в counterparty"
+            raise ValueError(message)  # noqa: TRY004 -- retain the established ValueError API.
         p = self.payload
         return {
             "id": str(p.id),
@@ -124,9 +127,8 @@ def parse_event(raw: bytes) -> ParsedEvent:
             payload = CounterpartyPayload.model_validate(envelope.payload)
         expects_deleted = envelope.event_type.endswith(".delete")
         if payload.deleted is not expects_deleted:
-            raise ValueError(
-                f"event_type={envelope.event_type} не согласован с deleted={payload.deleted}"
-            )
+            message = f"event_type={envelope.event_type} не согласован с deleted={payload.deleted}"
+            raise ValueError(message)
         return ParsedEvent(
             event_id=envelope.event_id,
             event_type=envelope.event_type,
@@ -135,4 +137,5 @@ def parse_event(raw: bytes) -> ParsedEvent:
             payload=payload,
         )
     except ValidationError as exc:
-        raise ValueError(f"Некорректное событие: {exc}") from exc
+        message = f"Некорректное событие: {exc}"
+        raise ValueError(message) from exc

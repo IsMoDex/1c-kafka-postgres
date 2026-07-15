@@ -1,18 +1,23 @@
-"""Kafka-продюсер событий интеграции.
+"""
+Kafka-продюсер событий интеграции.
 
 Гарантии:
   * ключ сообщения = стабильный id объекта 1С (порядок по ключу, идемпотентность);
   * acks=all + enable.idempotence — надёжная доставка без дублей на брокере;
   * ошибки доставки логируются, flush() дожидается подтверждений.
 """
+
 from __future__ import annotations
 
-from typing import Optional
+from typing import TYPE_CHECKING
 
 import structlog
 from confluent_kafka import Producer
 
-from integration.models import Event
+if TYPE_CHECKING:
+    from confluent_kafka import KafkaError, Message
+
+    from integration.models import Event
 
 log = structlog.get_logger()
 
@@ -32,13 +37,14 @@ class EventProducer:
         )
         self._delivery_errors = 0
 
-    def _on_delivery(self, err, msg) -> None:
+    def _on_delivery(self, err: KafkaError | None, msg: Message) -> None:
         if err is not None:
             self._delivery_errors += 1
+            key = msg.key()
             log.error(
                 "kafka_delivery_failed",
                 topic=msg.topic(),
-                key=msg.key().decode("utf-8") if msg.key() else None,
+                key=key.decode("utf-8") if key else None,
                 error=str(err),
             )
 
@@ -54,7 +60,8 @@ class EventProducer:
         self._producer.poll(0)
 
     def flush(self, timeout: float = 30.0) -> int:
-        """Дожидается подтверждения всех сообщений.
+        """
+        Дожидается подтверждения всех сообщений.
 
         Возвращает суммарное число проблем доставки: ошибки delivery-callback
         ПЛЮС неотправленные сообщения (remaining), оставшиеся в очереди после

@@ -1,4 +1,5 @@
-"""Слой доступа к PostgreSQL: идемпотентный upsert в одной транзакции.
+"""
+Слой доступа к PostgreSQL: идемпотентный upsert в одной транзакции.
 
 Ключевые правила (см. AGENTS.md, раздел 7):
   * upsert через INSERT ... ON CONFLICT (id) DO UPDATE — нет дублей;
@@ -7,12 +8,17 @@
   * мягкое удаление — обновление флага deleted, строки не удаляются физически;
   * весь пакет пишется в одной транзакции (atomic).
 """
+
 from __future__ import annotations
 
-from typing import Iterable
+from contextlib import suppress
+from typing import TYPE_CHECKING
 
 import psycopg
 from psycopg.rows import tuple_row
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 # SQL upsert формы собственности.
 # COALESCE-условие в WHERE даёт идемпотентность по времени.
@@ -56,40 +62,38 @@ class Database:
         self._dsn = dsn
         self._conn = self._connect()
 
-    def _connect(self):
+    def _connect(self) -> psycopg.Connection[tuple[object, ...]]:
         return psycopg.connect(self._dsn, autocommit=False, row_factory=tuple_row)
 
     def _reconnect(self) -> None:
-        try:
+        with suppress(psycopg.Error):
             self._conn.close()
-        except Exception:
-            pass
         self._conn = self._connect()
+
+    def _ping_once(self) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchone()
+        self._conn.rollback()
 
     def ping(self) -> bool:
         try:
-            with self._conn.cursor() as cur:
-                cur.execute("SELECT 1")
-                cur.fetchone()
-            self._conn.rollback()
-            return True
-        except Exception:
+            self._ping_once()
+        except Exception:  # noqa: BLE001 -- health probe must survive any driver failure and reconnect.
             try:
                 self._reconnect()
-                with self._conn.cursor() as cur:
-                    cur.execute("SELECT 1")
-                    cur.fetchone()
-                self._conn.rollback()
-                return True
-            except Exception:
+                self._ping_once()
+            except Exception:  # noqa: BLE001 -- a failed retry makes the dependency unhealthy.
                 return False
+        return True
 
     def apply_batch(
         self,
-        ownership_forms: Iterable[dict],
-        counterparties: Iterable[dict],
+        ownership_forms: Iterable[dict[str, object]],
+        counterparties: Iterable[dict[str, object]],
     ) -> None:
-        """Применяет пакет upsert-ов в ЕДИНОЙ транзакции.
+        """
+        Применяет пакет upsert-ов в ЕДИНОЙ транзакции.
 
         Формы собственности применяются первыми (FK-зависимость).
         При исключении транзакция откатывается целиком.
@@ -101,17 +105,14 @@ class Database:
                 for row in counterparties:
                     cur.execute(_UPSERT_COUNTERPARTY, row)
             self._conn.commit()
+        # Roll back every failed transaction, then preserve the original exception.
         except Exception as exc:
-            try:
+            with suppress(psycopg.Error):
                 self._conn.rollback()
-            except Exception:
-                pass
             if isinstance(exc, (psycopg.OperationalError, psycopg.InterfaceError)):
                 self._reconnect()
             raise
 
     def close(self) -> None:
-        try:
+        with suppress(psycopg.Error):
             self._conn.close()
-        except Exception:
-            pass

@@ -12,8 +12,12 @@ dependencies = [
     "structlog>=24.1",
 ]
 
-[project.optional-dependencies]
-test = ["pytest>=8.0"]
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.15.0",
+    "ty>=0.0.56",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -29,3 +33,32 @@ where = ["src"]
 markers = [
     "integration: tests against the live 1C, Kafka, consumer-service, and PostgreSQL stack",
 ]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+indent-width = 4
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812",
+    "D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107",
+    "D203", "D212",
+    "FIX002",
+    "RET504",
+    "RUF001",
+    "RUF002", "RUF003",
+    "TD002", "TD003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["PLR2004", "S101"]
+"tests/test_onec_http.py" = ["PLR2004", "S101", "SLF001"]
+"tests/test_sync.py" = ["PLR2004", "S101", "SLF001"]
+
+[tool.ruff.format]
+line-ending = "lf"
+docstring-code-format = true
+quote-style = "double"
+indent-style = "space"

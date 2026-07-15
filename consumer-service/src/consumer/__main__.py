@@ -1,9 +1,11 @@
-"""Точка входа consumer-service: python -m consumer [run].
+"""
+Точка входа consumer-service: python -m consumer [run].
 
 Демон читает Kafka и пишет upsert в PostgreSQL. Настройки — из переменных
 окружения (см. config.py / .env.example). Поддерживает `--help` без запуска
 сервиса, чтобы диагностика не поднимала слушатель порта.
 """
+
 from __future__ import annotations
 
 import argparse

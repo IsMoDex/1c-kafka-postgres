@@ -14,8 +14,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  quality:
+    name: Quality (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [integration-service, consumer-service]
+    defaults:
+      run:
+        working-directory: ${{ matrix.service }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.17"
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --locked
+
+      - name: Check formatting
+        run: uv run ruff format --check .
+
+      - name: Lint
+        run: uv run ruff check --output-format=github .
+
+      - name: Type check
+        run: uv run ty check
+
   unit-tests:
     name: Unit tests (${{ matrix.service }})
+    needs: quality
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -31,31 +65,55 @@ jobs:
         working-directory: ${{ matrix.service }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: ${{ matrix.service }}/pyproject.toml
+          version: "0.11.17"
+          enable-cache: true
 
-      - name: Install service with test dependencies
-        run: python -m pip install ".[test]"
+      - name: Install locked dependencies
+        run: uv sync --locked
 
       - name: Run tests
-        run: ${{ matrix.command }}
+        run: uv run ${{ matrix.command }}
+
+  production-images:
+    name: Production image (${{ matrix.service }})
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [integration-service, consumer-service]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build production target
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ./${{ matrix.service }}
+          target: prod
+          push: false
+          cache-from: type=gha,scope=${{ matrix.service }}-prod
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}-prod
 
   compose-integration:
     name: Compose integration
-    needs: unit-tests
+    needs: [unit-tests, production-images]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
       SOURCE_TYPE: mock
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Validate Compose configuration
         run: docker compose config --quiet

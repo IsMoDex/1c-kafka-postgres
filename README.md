@@ -27,6 +27,7 @@
 - [Перезапуск синхронизации](#перезапуск-синхронизации)
 - [Архитектурные решения](#архитектурные-решения)
 - [Ограничения](#ограничения)
+- [Качество кода](#качество-кода)
 - [GitHub Actions](#github-actions)
 - [Запуск на Windows](#запуск-на-windows)
 
@@ -375,12 +376,39 @@ make sync-incremental && make verify          # deleted = true
 
 ---
 
+## Качество кода
+
+У каждого Python-сервиса свой `pyproject.toml`, `.python-version` и `uv.lock`.
+Зависимости воспроизводимы, а production- и dev-окружения разделены.
+
+Полная локальная проверка одной командой:
+
+```bash
+just quality
+```
+
+Она включает Ruff formatter, строгий Ruff lint (`select = ["ALL"]`), `ty`,
+проверку lock-файлов и 32 unit/component теста. Pre-commit hooks запускаются
+через `prek run --all-files`. Установка инструментов и отдельные команды описаны
+в [`docs/development.md`](docs/development.md).
+
+Dockerfile обоих сервисов используют multi-stage build:
+
+- `test` — локальный Compose-контур с pytest;
+- `prod` — минимальный non-root runtime без тестов, Ruff, ty и uv.
+
+---
+
 ## GitHub Actions
 
-`.github/workflows/ci.yml` автоматически запускает unit-тесты обоих сервисов и
-Docker Compose integration smoke для push в `main` и pull request. Стандартный
-CI использует `SOURCE_TYPE=mock`, но остальные компоненты настоящие: Kafka,
-PostgreSQL, integration-service и consumer-service.
+`.github/workflows/ci.yml` автоматически запускает форматирование, Ruff, ty,
+unit-тесты обоих сервисов, сборку production-образов и Docker Compose integration
+smoke для push в `main` и pull request. Стандартный CI использует
+`SOURCE_TYPE=mock`, но остальные компоненты настоящие: Kafka, PostgreSQL,
+integration-service и consumer-service.
+
+После успешного CI в `main` workflow `.github/workflows/publish-images.yml`
+публикует production-образы в GitHub Container Registry.
 
 Полная проверка с реальной 1С запускается вручную workflow
 `.github/workflows/live-onec.yml` на self-hosted Windows runner.
@@ -430,10 +458,12 @@ Copy-Item .env.example .env   # SOURCE_TYPE=mock по умолчанию
 ## Структура репозитория
 
 ```
-├── docker-compose.yml
+├── compose.yaml             # Docker Compose (современное стандартное имя)
 ├── README.md               # этот файл
 ├── AGENTS.md               # архитектурный справочник/журнал проекта
-├── Makefile / make.ps1
+├── Makefile / make.ps1     # runtime/demo команды
+├── justfile                # quality и developer-команды
+├── prek.toml               # pre-commit hooks
 ├── .env.example
 ├── migrations/             # SQL-схема (0001_init.sql)
 ├── sql/                    # проверочные запросы (verify.sql)
@@ -448,6 +478,7 @@ Copy-Item .env.example .env   # SOURCE_TYPE=mock по умолчанию
 ## Требования
 
 - Docker + Docker Compose.
+- Для локальной разработки: `uv`; опционально `just` и `prek`.
 - Для реального источника: 1С:Предприятие 8.3+ и веб-сервер
   (проверено на 8.5.1.1302 community; см. `1c/setup.md`).
 - Для `make`: GNU make (Linux/macOS/WSL/Git Bash) либо `make.ps1` на Windows.

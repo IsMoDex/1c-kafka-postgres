@@ -1,4 +1,5 @@
 """Общие структуры логирования для сервисов (structlog, JSON-вывод)."""
+
 from __future__ import annotations
 
 import logging
@@ -8,7 +9,8 @@ import structlog
 
 
 def configure_logging(service: str) -> structlog.stdlib.BoundLogger:
-    """Настраивает структурированное JSON-логирование.
+    """
+    Настраивает структурированное JSON-логирование.
 
     Уровень берётся из переменной окружения LOG_LEVEL (по умолчанию INFO).
     Все логи снабжаются полем ``service`` для трассировки в общем потоке.

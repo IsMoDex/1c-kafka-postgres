@@ -1,12 +1,12 @@
 """Интеграционные тесты живого контура 1С -> Kafka -> PostgreSQL."""
+
 from __future__ import annotations
 
 import json
 import os
 import time
 import uuid
-from collections.abc import Callable, Iterator
-from typing import Any
+from typing import TYPE_CHECKING
 
 import httpx
 import psycopg
@@ -17,6 +17,9 @@ from integration.config import Config
 from integration.sources.onec_http import OneCHttpSource
 from integration.sync import Synchronizer
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+    from typing import Any, LiteralString
 
 pytestmark = pytest.mark.integration
 
@@ -66,7 +69,11 @@ def _sync(config: Config, mode: str) -> dict[str, Any]:
         source.close()
 
 
-def _fetchone(config: Config, query: str, params: tuple = ()) -> tuple:
+def _fetchone(
+    config: Config,
+    query: LiteralString,
+    params: tuple[Any, ...] = (),
+) -> tuple[Any, ...]:
     with psycopg.connect(config.pg_dsn) as conn:
         row = conn.execute(query, params).fetchone()
         assert row is not None
@@ -107,9 +114,7 @@ def _watermarks(config: Config, topics: tuple[str, ...]) -> dict[tuple[str, int]
             assert topic_metadata is not None, f"Kafka topic does not exist: {topic}"
             assert topic_metadata.error is None, str(topic_metadata.error)
             for partition in topic_metadata.partitions:
-                _, high = consumer.get_watermark_offsets(
-                    TopicPartition(topic, partition), timeout=10
-                )
+                _, high = consumer.get_watermark_offsets(TopicPartition(topic, partition), timeout=10)
                 result[(topic, partition)] = high
         return result
     finally:
@@ -125,6 +130,7 @@ def _wait_for_main_consumer(
     consumer = _kafka_consumer(config, group_id)
     partitions = [TopicPartition(topic, partition) for topic, partition in target_offsets]
     try:
+
         def caught_up() -> bool:
             committed = consumer.committed(partitions, timeout=10)
             offsets = {(tp.topic, tp.partition): tp.offset for tp in committed}
@@ -142,9 +148,7 @@ def _read_range(
 ) -> list[dict[str, Any]]:
     expected = sum(end[key] - offset for key, offset in start.items())
     consumer = _kafka_consumer(config, f"integration-events-{uuid.uuid4()}")
-    consumer.assign(
-        [TopicPartition(topic, partition, offset) for (topic, partition), offset in start.items()]
-    )
+    consumer.assign([TopicPartition(topic, partition, offset) for (topic, partition), offset in start.items()])
     events: list[dict[str, Any]] = []
     deadline = time.monotonic() + 20
     try:
@@ -154,11 +158,18 @@ def _read_range(
                 continue
             if message.error():
                 pytest.fail(str(message.error()))
-            key = (message.topic(), message.partition())
-            if message.offset() >= end[key]:
+            topic = message.topic()
+            partition = message.partition()
+            offset = message.offset()
+            value = message.value()
+            message_key = message.key()
+            if topic is None or partition is None or offset is None or value is None or message_key is None:
+                pytest.fail("Kafka returned a message with missing metadata or payload")
+            key = (topic, partition)
+            if offset >= end[key]:
                 continue
-            event = json.loads(message.value())
-            assert message.key().decode("utf-8") == str(event["payload"]["id"])
+            event = json.loads(value)
+            assert message_key.decode("utf-8") == str(event["payload"]["id"])
             events.append(event)
     finally:
         consumer.close()
@@ -180,21 +191,18 @@ def _db_counts(config: Config) -> tuple[int, int, int]:
 
 def test_live_onec_contract(onec_client: httpx.Client) -> None:
     forms_response = onec_client.get("/ownership-forms", params={"limit": 500, "offset": 0})
-    counterparties_response = onec_client.get(
-        "/counterparties", params={"limit": 500, "offset": 0}
-    )
+    counterparties_response = onec_client.get("/counterparties", params={"limit": 500, "offset": 0})
 
     assert forms_response.status_code == 200
     assert counterparties_response.status_code == 200
     forms = forms_response.json()
     counterparties = counterparties_response.json()
-    assert isinstance(forms, list) and len(forms) >= 3
-    assert isinstance(counterparties, list) and len(counterparties) >= 5
+    assert isinstance(forms, list)
+    assert len(forms) >= 3
+    assert isinstance(counterparties, list)
+    assert len(counterparties) >= 5
     assert all({"id", "name", "deleted", "updated_at"} <= row.keys() for row in forms)
-    assert all(
-        {"id", "name", "ownership_form_id", "deleted", "updated_at"} <= row.keys()
-        for row in counterparties
-    )
+    assert all({"id", "name", "ownership_form_id", "deleted", "updated_at"} <= row.keys() for row in counterparties)
 
     invalid = onec_client.get("/counterparties", params={"changed_since": "not-a-date"})
     assert invalid.status_code == 400
@@ -225,14 +233,17 @@ def test_full_sync_reaches_kafka_and_postgres_idempotently(config: Config) -> No
     assert counts_after_first[0] >= 3
     assert counts_after_first[1] >= 5
     assert counts_after_first[2] == 0
-    assert _fetchone(
-        config,
-        """
+    assert (
+        _fetchone(
+            config,
+            """
         SELECT count(*) FROM counterparties c
         LEFT JOIN ownership_forms o ON o.id = c.ownership_form_id
         WHERE c.ownership_form_id IS NOT NULL AND o.id IS NULL
         """,
-    )[0] == 0
+        )[0]
+        == 0
+    )
 
     second_result = _sync(config, "full")
     second_offsets = _watermarks(config, TOPICS)
@@ -260,27 +271,23 @@ def test_incremental_update_propagates_and_restores(
         offsets = _watermarks(config, TOPICS)
         _wait_for_main_consumer(config, offsets)
         _wait_until(
-            lambda: _fetchone(
-                config, "SELECT name FROM counterparties WHERE id = %s", (target["id"],)
-            )[0] == changed_name,
+            lambda: (
+                _fetchone(config, "SELECT name FROM counterparties WHERE id = %s", (target["id"],))[0] == changed_name
+            ),
             "incremental update did not reach PostgreSQL",
         )
         assert result["counterparties"] >= 1
-        assert _fetchone(
-            config, "SELECT count(*) FROM counterparties WHERE id = %s", (target["id"],)
-        )[0] == 1
+        assert _fetchone(config, "SELECT count(*) FROM counterparties WHERE id = %s", (target["id"],))[0] == 1
     finally:
-        restore = onec_client.post(
-            "/touch", params={"id": target["id"], "name": original_name}
-        )
+        restore = onec_client.post("/touch", params={"id": target["id"], "name": original_name})
         assert restore.status_code == 200
         _sync(config, "incremental")
         restore_offsets = _watermarks(config, TOPICS)
         _wait_for_main_consumer(config, restore_offsets)
         _wait_until(
-            lambda: _fetchone(
-                config, "SELECT name FROM counterparties WHERE id = %s", (target["id"],)
-            )[0] == original_name,
+            lambda: (
+                _fetchone(config, "SELECT name FROM counterparties WHERE id = %s", (target["id"],))[0] == original_name
+            ),
             "test cleanup did not restore the original counterparty name",
         )
 
@@ -299,9 +306,7 @@ def test_soft_delete_health_and_dlq(
     offsets = _watermarks(config, TOPICS)
     _wait_for_main_consumer(config, offsets)
     _wait_until(
-        lambda: _fetchone(
-            config, "SELECT deleted FROM counterparties WHERE id = %s", (target["id"],)
-        )[0] is True,
+        lambda: _fetchone(config, "SELECT deleted FROM counterparties WHERE id = %s", (target["id"],))[0] is True,
         "soft delete did not reach PostgreSQL",
     )
     assert result["counterparties"] >= 1

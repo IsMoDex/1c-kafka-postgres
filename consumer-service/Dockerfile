@@ -1,22 +1,53 @@
-# syntax=docker/dockerfile:1
-FROM python:3.12-slim
+# syntax=docker/dockerfile:1.7
+
+FROM ghcr.io/astral-sh/uv:0.11.17 AS uv
+
+FROM python:3.12-slim-bookworm AS build
+
+COPY --from=uv /uv /uvx /bin/
+
+WORKDIR /app
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=0
+
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project
+
+COPY src ./src
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
+
+FROM build AS test
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen
+COPY tests ./tests
+
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+EXPOSE 8081
+ENTRYPOINT ["python", "-m", "consumer"]
+
+FROM python:3.12-slim-bookworm AS prod
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends librdkafka1 \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system app \
+    && useradd --system --gid app --create-home app
 
 WORKDIR /app
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
-COPY pyproject.toml ./
-COPY src ./src
-COPY tests ./tests
+COPY --from=build --chown=app:app /app/.venv /app/.venv
+COPY --from=build --chown=app:app /app/src /app/src
 
-RUN pip install --upgrade pip && pip install ".[test]"
-
+USER app
 EXPOSE 8081
-
 ENTRYPOINT ["python", "-m", "consumer"]

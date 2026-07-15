@@ -1,0 +1,98 @@
+#:schema https://www.schemastore.org/prek.json
+
+orphan = true
+default_stages = ["pre-commit"]
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "integration-ruff-format"
+name = "integration-service: ruff format"
+entry = "uv run --project integration-service ruff format integration-service"
+language = "system"
+pass_filenames = false
+files = '^integration-service/.*\.py$'
+
+[[repos.hooks]]
+id = "integration-ruff-check"
+name = "integration-service: ruff check"
+entry = "uv run --project integration-service ruff check integration-service"
+language = "system"
+pass_filenames = false
+files = '^integration-service/.*\.py$'
+
+[[repos.hooks]]
+id = "integration-ty-check"
+name = "integration-service: ty check"
+entry = "uv run --project integration-service ty check --project integration-service"
+language = "system"
+pass_filenames = false
+files = '^integration-service/(.*\.py|pyproject\.toml|uv\.lock)$'
+
+[[repos.hooks]]
+id = "integration-uv-lock"
+name = "integration-service: uv lock"
+entry = "uv lock --project integration-service --check"
+language = "system"
+pass_filenames = false
+files = '^integration-service/(pyproject\.toml|uv\.lock)$'
+
+[[repos.hooks]]
+id = "consumer-ruff-format"
+name = "consumer-service: ruff format"
+entry = "uv run --project consumer-service ruff format consumer-service"
+language = "system"
+pass_filenames = false
+files = '^consumer-service/.*\.py$'
+
+[[repos.hooks]]
+id = "consumer-ruff-check"
+name = "consumer-service: ruff check"
+entry = "uv run --project consumer-service ruff check consumer-service"
+language = "system"
+pass_filenames = false
+files = '^consumer-service/.*\.py$'
+
+[[repos.hooks]]
+id = "consumer-ty-check"
+name = "consumer-service: ty check"
+entry = "uv run --project consumer-service ty check --project consumer-service"
+language = "system"
+pass_filenames = false
+files = '^consumer-service/(.*\.py|pyproject\.toml|uv\.lock)$'
+
+[[repos.hooks]]
+id = "consumer-uv-lock"
+name = "consumer-service: uv lock"
+entry = "uv lock --project consumer-service --check"
+language = "system"
+pass_filenames = false
+files = '^consumer-service/(pyproject\.toml|uv\.lock)$'
+
+[[repos]]
+repo = "builtin"
+
+[[repos.hooks]]
+id = "check-added-large-files"
+
+[[repos.hooks]]
+id = "check-case-conflict"
+
+[[repos.hooks]]
+id = "check-merge-conflict"
+
+[[repos.hooks]]
+id = "check-toml"
+
+[[repos.hooks]]
+id = "check-yaml"
+files = '\.ya?ml$'
+
+[[repos.hooks]]
+id = "end-of-file-fixer"
+files = '(\.md|\.ya?ml|\.toml|\.sql|\.sh|\.ps1|\.txt|\.json|Dockerfile|Makefile|justfile|\.env\.example|\.gitignore|\.dockerignore|\.gitattributes)$'
+
+[[repos.hooks]]
+id = "trailing-whitespace"
+files = '(\.md|\.ya?ml|\.toml|\.sql|\.sh|\.ps1|\.txt|\.json|Dockerfile|Makefile|justfile|\.env\.example|\.gitignore|\.dockerignore|\.gitattributes)$'
