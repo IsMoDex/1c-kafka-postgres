@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import psycopg
@@ -57,13 +58,29 @@ WHERE counterparties.source_updated_at IS NULL
 """
 
 
+@dataclass(frozen=True)
+class ApplyResult:
+    ownership_forms: int
+    counterparties: int
+
+    @property
+    def total(self) -> int:
+        return self.ownership_forms + self.counterparties
+
+
 class Database:
     def __init__(self, dsn: str) -> None:
         self._dsn = dsn
         self._conn = self._connect()
 
     def _connect(self) -> psycopg.Connection[tuple[object, ...]]:
-        return psycopg.connect(self._dsn, autocommit=False, row_factory=tuple_row)
+        return psycopg.connect(
+            self._dsn,
+            autocommit=False,
+            row_factory=tuple_row,
+            connect_timeout=5,
+            options="-c statement_timeout=10000 -c lock_timeout=5000",
+        )
 
     def _reconnect(self) -> None:
         with suppress(psycopg.Error):
@@ -91,7 +108,7 @@ class Database:
         self,
         ownership_forms: Iterable[dict[str, object]],
         counterparties: Iterable[dict[str, object]],
-    ) -> None:
+    ) -> ApplyResult:
         """
         Применяет пакет upsert-ов в ЕДИНОЙ транзакции.
 
@@ -99,18 +116,24 @@ class Database:
         При исключении транзакция откатывается целиком.
         """
         try:
+            ownership_count = 0
+            counterparty_count = 0
             with self._conn.cursor() as cur:
                 for row in ownership_forms:
                     cur.execute(_UPSERT_OWNERSHIP_FORM, row)
+                    ownership_count += cur.rowcount
                 for row in counterparties:
                     cur.execute(_UPSERT_COUNTERPARTY, row)
+                    counterparty_count += cur.rowcount
             self._conn.commit()
+            return ApplyResult(ownership_count, counterparty_count)
         # Roll back every failed transaction, then preserve the original exception.
         except Exception as exc:
             with suppress(psycopg.Error):
                 self._conn.rollback()
             if isinstance(exc, (psycopg.OperationalError, psycopg.InterfaceError)):
-                self._reconnect()
+                with suppress(psycopg.Error):
+                    self._reconnect()
             raise
 
     def close(self) -> None:

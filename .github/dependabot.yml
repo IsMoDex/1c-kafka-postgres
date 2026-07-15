@@ -1,0 +1,22 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /integration-service
+    schedule:
+      interval: weekly
+    groups:
+      integration-service-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /consumer-service
+    schedule:
+      interval: weekly
+    groups:
+      consumer-service-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

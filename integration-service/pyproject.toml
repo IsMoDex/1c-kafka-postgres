@@ -10,6 +10,7 @@ dependencies = [
     "confluent-kafka>=2.5",
     "psycopg[binary]>=3.2",
     "structlog>=24.1",
+    "filelock>=3.20,<4",
 ]
 
 [dependency-groups]

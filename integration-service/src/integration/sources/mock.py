@@ -17,8 +17,11 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+
+from filelock import FileLock
 
 from integration.models import Counterparty, OwnershipForm
 from integration.sources.base import Source
@@ -99,27 +102,58 @@ class MockSource(Source):
 
     def __init__(self, state_path: str | None = None) -> None:
         self._path = Path(state_path or os.getenv("SEED_STATE_PATH", "/data/mock_state.json"))
-        self._state = self._load()
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = FileLock(f"{self._path}.lock")
+        with self._lock:
+            self._state = self._load()
 
     # ── загрузка/сохранение состояния ────────────────────────────────────
     def _load(self) -> dict[str, list[dict[str, object]]]:
         if self._path.exists():
             return json.loads(self._path.read_text(encoding="utf-8"))
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(_SEED, ensure_ascii=False, indent=2), encoding="utf-8")
-        return json.loads(json.dumps(_SEED))
+        state = json.loads(json.dumps(_SEED))
+        self._save(state)
+        return state
 
-    def _save(self) -> None:
-        self._path.write_text(json.dumps(self._state, ensure_ascii=False, indent=2), encoding="utf-8")
+    def _save(self, state: dict[str, list[dict[str, object]]]) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                dir=self._path.parent,
+                prefix=f".{self._path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as stream:
+                temp_path = Path(stream.name)
+                json.dump(state, stream, ensure_ascii=False, indent=2)
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            temp_path.replace(self._path)
+            temp_path = None
+        finally:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
+
+    def _refresh(self) -> None:
+        self._state = self._load()
 
     # ── реализация интерфейса Source ─────────────────────────────────────
     def fetch_ownership_forms(self, changed_since: datetime | None = None) -> list[OwnershipForm]:
-        rows = self._state["ownership_forms"]
+        with self._lock:
+            self._refresh()
+            rows = self._state["ownership_forms"]
         rows = self._filter_changed(rows, changed_since)
         return [OwnershipForm.model_validate(r) for r in rows]
 
     def fetch_counterparties(self, changed_since: datetime | None = None) -> list[Counterparty]:
-        rows = self._state["counterparties"]
+        with self._lock:
+            self._refresh()
+            rows = self._state["counterparties"]
         rows = self._filter_changed(rows, changed_since)
         return [Counterparty.model_validate(r) for r in rows]
 
@@ -140,13 +174,17 @@ class MockSource(Source):
     # ── помощники для демо-сценария (мутации состояния) ──────────────────
     def touch_counterparty(self, cp_id: str, **changes: object) -> None:
         """Изменить контрагента и обновить updated_at (для demo incremental)."""
-        now = datetime.now(UTC).isoformat()
-        for r in self._state["counterparties"]:
-            if r["id"] == cp_id:
-                r.update(changes)
-                r["updated_at"] = now
-                break
-        self._save()
+        with self._lock:
+            self._refresh()
+            now = datetime.now(UTC).isoformat()
+            for row in self._state["counterparties"]:
+                if row["id"] == cp_id:
+                    row.update(changes)
+                    row["updated_at"] = now
+                    self._save(self._state)
+                    return
+        msg = f"Counterparty {cp_id!r} was not found in mock state"
+        raise LookupError(msg)
 
     def soft_delete_counterparty(self, cp_id: str) -> None:
         """Пометить контрагента удалённым (deleted=true) с новым updated_at."""

@@ -13,11 +13,14 @@
 from __future__ import annotations
 
 import signal
+import threading
 import time
 from typing import TYPE_CHECKING, cast
 
 import structlog
 from confluent_kafka import Consumer, KafkaError, KafkaException, Message, Producer, TopicPartition
+from psycopg import InterfaceError, OperationalError
+from psycopg.errors import CheckViolation, ForeignKeyViolation, NotNullViolation, UniqueViolation
 
 from consumer.config import Config
 from consumer.db import Database
@@ -90,12 +93,20 @@ class DlqProducer:
         log.warning("sent_to_dlq", topic=dlq_topic, reason=reason)
         return True
 
+    def close(self, timeout: float = 5.0) -> bool:
+        """Flush queued messages before shutdown."""
+        remaining = self._producer.flush(timeout)
+        if remaining:
+            log.error("dlq_close_incomplete", remaining=remaining)
+            return False
+        return True
+
 
 class Worker:
     def __init__(self, config: Config, health: HealthState) -> None:
         self._cfg = config
         self._health = health
-        self._running = True
+        self._stop_event = threading.Event()
 
         self._consumer = Consumer(
             {
@@ -114,22 +125,23 @@ class Worker:
 
     def stop(self, _signum: int, _frame: FrameType | None) -> None:
         log.info("shutdown_signal_received")
-        self._running = False
+        self._health.set_stopping()
+        self._stop_event.set()
 
     def run(self) -> None:
         self._consumer.subscribe(self._cfg.topics)
-        self._health.ready = True
+        self._health.set_running()
         log.info("consumer_started", topics=self._cfg.topics, group=self._cfg.consumer_group)
 
         next_db_ping = time.monotonic()
         next_kafka_probe = time.monotonic()
         try:
-            while self._running:
+            while not self._stop_event.is_set():
                 if time.monotonic() >= next_db_ping:
                     if self._db.ping():
                         self._health.mark_db_ok()
                     else:
-                        self._health.db_ok = False
+                        self._health.mark_db_failed("PostgreSQL health probe failed")
                     next_db_ping = time.monotonic() + 10
                 if time.monotonic() >= next_kafka_probe:
                     self._probe_kafka()
@@ -137,6 +149,9 @@ class Worker:
                 batch = self._poll_batch()
                 if not batch:
                     continue
+                if self._stop_event.is_set():
+                    self._rewind(batch)
+                    break
                 self._process_batch(batch)
         finally:
             self._shutdown()
@@ -145,7 +160,7 @@ class Worker:
     def _poll_batch(self) -> list[Message]:
         batch: list[Message] = []
         deadline = time.monotonic() + self._cfg.batch_max_seconds
-        while self._running and len(batch) < self._cfg.batch_max_messages:
+        while not self._stop_event.is_set() and len(batch) < self._cfg.batch_max_messages:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
@@ -161,13 +176,11 @@ class Worker:
                 # Транзиентные ошибки (топик ещё не прогрузился брокером,
                 # ребаланс и т.п.) — логируем и продолжаем, не роняя сервис.
                 if err.retriable() or err.code() == KafkaError.UNKNOWN_TOPIC_OR_PART:
-                    self._health.kafka_ok = False
-                    self._health.last_kafka_error = str(err)
+                    self._health.mark_kafka_failed(str(err))
                     log.warning("kafka_transient_error", error=str(err), code=err.code())
-                    time.sleep(1.0)
+                    self._stop_event.wait(1.0)
                     continue
-                self._health.kafka_ok = False
-                self._health.last_kafka_error = str(err)
+                self._health.mark_kafka_failed(str(err))
                 log.error("kafka_consume_error", error=str(err))
                 raise KafkaException(err)
             self._health.mark_kafka_ok()
@@ -180,19 +193,20 @@ class Worker:
             self._consumer.list_topics(timeout=2)
             self._health.mark_kafka_ok()
         except Exception as exc:  # noqa: BLE001 -- probe failures of any origin must only affect health state.
-            self._health.kafka_ok = False
-            self._health.last_kafka_error = str(exc)
+            self._health.mark_kafka_failed(str(exc))
             log.warning("kafka_probe_failed", error=str(exc))
 
     # ── обработка батча ─────────────────────────────────────────────────────
-    def _process_batch(self, batch: list[Message]) -> None:
+    def _process_batch(self, batch: list[Message]) -> None:  # noqa: C901, PLR0912 -- one offset decision boundary.
         ownership_rows: list[dict[str, object]] = []
         counterparty_rows: list[dict[str, object]] = []
+        valid_events: list[tuple[Message, ParsedEvent]] = []
         poison: list[tuple[Message, str]] = []
 
         for msg in batch:
             try:
                 event: ParsedEvent = parse_event(cast("bytes", msg.value()))
+                valid_events.append((msg, event))
                 if event.entity == Entity.OWNERSHIP_FORM:
                     ownership_rows.append(event.ownership_form_row())
                 else:
@@ -200,95 +214,145 @@ class Worker:
             except Exception as exc:  # noqa: BLE001 -- any malformed message must be isolated in DLQ.
                 poison.append((msg, f"parse_error: {exc}"))
 
-        # Ядовитые сообщения — сразу в DLQ. Если хотя бы одна DLQ-доставка не
-        # подтверждена, НЕ пишем остальные rows и НЕ коммитим batch целиком.
-        # Иначе commit более позднего offset той же партиции перескочит через
-        # проблемное сообщение и нарушит at-least-once.
+        applied_rows = 0
+        if ownership_rows or counterparty_rows:
+            try:
+                result = self._apply_with_retry(
+                    batch,
+                    ownership_rows,
+                    counterparty_rows,
+                    rewind_on_data_error=False,
+                )
+            except (CheckViolation, ForeignKeyViolation, NotNullViolation, UniqueViolation):
+                fallback = self._apply_individually(valid_events)
+                if fallback is None:
+                    return
+                result, db_poison = fallback
+                poison.extend(db_poison)
+            if result is None:
+                return
+            applied_rows = result
+
+        # Apply valid rows before DLQ delivery. If DLQ fails, replaying the DB
+        # writes is safe because upserts are idempotent, while sending poison
+        # before a transient DB failure would duplicate DLQ records on restart.
         dlq_failed = False
         for msg, reason in poison:
+            if self._stop_event.is_set():
+                self._rewind(batch)
+                return
             if self._dlq.send(cast("str", msg.topic()), msg.key(), msg.value(), reason):
-                self._health.messages_dlq += 1
-                self._health.last_error = reason
+                self._health.record_dlq(reason)
             else:
                 dlq_failed = True
 
         if dlq_failed:
-            self._health.last_error = "DLQ delivery failed; batch will be retried"
+            self._health.record_error("DLQ delivery failed; batch will be retried")
             log.error("batch_not_committed_due_to_dlq_failure", messages=len(batch))
             self._rewind(batch)
             return
 
-        if ownership_rows or counterparty_rows:
-            self._write_with_retry(batch, ownership_rows, counterparty_rows)
-        elif batch:
-            # Только poison, весь DLQ подтверждён — коммитим, чтобы не зациклиться.
-            self._commit(batch)
-
-    def _write_with_retry(
-        self,
-        batch: list[Message],
-        of_rows: list[dict[str, object]],
-        cp_rows: list[dict[str, object]],
-    ) -> None:
-        attempt = 0
-        while True:
-            attempt += 1
-            try:
-                self._db.apply_batch(of_rows, cp_rows)
-                self._health.mark_db_ok()
-                break
-            # Retry and DLQ must cover every transactional failure from the database layer.
-            except Exception as exc:
-                if self._db.ping():
-                    self._health.mark_db_ok()
-                else:
-                    self._health.db_ok = False
-                self._health.last_error = str(exc)
-                log.exception("batch_write_failed", attempt=attempt, error=str(exc))
-                if attempt > self._cfg.max_retries:
-                    # Исчерпали попытки — весь батч в DLQ. Offset-ы коммитим
-                    # только если брокер подтвердил ВСЕ сообщения: частичный
-                    # commit может перескочить через gap внутри партиции.
-                    log.exception("batch_exhausted_retries", messages=len(batch))
-                    all_delivered = True
-                    for msg in batch:
-                        if self._dlq.send(
-                            cast("str", msg.topic()),
-                            msg.key(),
-                            msg.value(),
-                            f"db_write_failed_after_retries: {exc}",
-                        ):
-                            self._health.messages_dlq += 1
-                        else:
-                            all_delivered = False
-                    if all_delivered:
-                        self._commit(batch)
-                    else:
-                        log.exception("batch_not_committed_due_to_dlq_failure", messages=len(batch))
-                        self._rewind(batch)
-                    return
-                time.sleep(min(2**attempt, 30))
-
         try:
             self._commit(batch)
             self._health.mark_kafka_ok()
-        # Any failed commit must rewind the locally advanced consumer position.
         except Exception as exc:
-            self._health.kafka_ok = False
-            self._health.last_kafka_error = str(exc)
+            self._health.mark_kafka_failed(str(exc))
             log.exception("kafka_commit_failed", error=str(exc), messages=len(batch))
             self._rewind(batch)
             return
 
-        self._health.rows_processed += len(of_rows) + len(cp_rows)
-        self._health.messages_processed += len(batch)
-        self._health.last_error = None
+        self._health.record_batch(
+            rows=applied_rows,
+            messages=len(batch) - len(poison),
+        )
         log.info(
             "batch_committed",
-            ownership_forms=len(of_rows),
-            counterparties=len(cp_rows),
+            ownership_forms=len(ownership_rows),
+            counterparties=len(counterparty_rows),
             messages=len(batch),
+            poison=len(poison),
         )
+
+    def _apply_individually(
+        self,
+        valid_events: list[tuple[Message, ParsedEvent]],
+    ) -> tuple[int, list[tuple[Message, str]]] | None:
+        """Isolate permanent constraint errors after an atomic batch failed."""
+        applied_rows = 0
+        poison: list[tuple[Message, str]] = []
+        ordered = sorted(valid_events, key=lambda item: item[1].entity != Entity.OWNERSHIP_FORM)
+        for msg, event in ordered:
+            if event.entity == Entity.OWNERSHIP_FORM:
+                ownership_rows = [event.ownership_form_row()]
+                counterparty_rows: list[dict[str, object]] = []
+            else:
+                ownership_rows = []
+                counterparty_rows = [event.counterparty_row()]
+            try:
+                result = self._apply_with_retry(
+                    [msg],
+                    ownership_rows,
+                    counterparty_rows,
+                    rewind_on_data_error=False,
+                )
+            except (CheckViolation, ForeignKeyViolation, NotNullViolation, UniqueViolation) as exc:
+                poison.append((msg, f"db_constraint_error: {exc}"))
+                continue
+            if result is None:
+                return None
+            applied_rows += result
+        return applied_rows, poison
+
+    def _apply_with_retry(  # noqa: C901 -- error classes intentionally have distinct delivery semantics.
+        self,
+        batch: list[Message],
+        of_rows: list[dict[str, object]],
+        cp_rows: list[dict[str, object]],
+        *,
+        rewind_on_data_error: bool = True,
+    ) -> int | None:
+        retries = 0
+        while not self._stop_event.is_set():
+            try:
+                result = self._db.apply_batch(of_rows, cp_rows)
+                self._health.mark_db_ok()
+            except (OperationalError, InterfaceError) as exc:
+                self._health.mark_db_failed(str(exc))
+                log.exception("batch_write_transient_error", retry=retries, error=str(exc))
+                if retries >= self._cfg.max_retries:
+                    self._rewind(batch)
+                    log.exception("batch_write_retries_exhausted", messages=len(batch))
+                    raise
+                retries += 1
+                self._health.record_db_retry()
+                if self._stop_event.wait(min(2**retries, 30)):
+                    self._rewind(batch)
+                    return None
+            except ForeignKeyViolation as exc:
+                log.warning("batch_write_fk_retry", retry=retries, error=str(exc))
+                if retries >= self._cfg.max_retries:
+                    if rewind_on_data_error:
+                        self._rewind(batch)
+                    raise
+                retries += 1
+                self._health.record_db_retry()
+                if self._stop_event.wait(min(2**retries, 30)):
+                    self._rewind(batch)
+                    return None
+            except (CheckViolation, NotNullViolation, UniqueViolation) as exc:
+                if rewind_on_data_error:
+                    self._rewind(batch)
+                log.warning("batch_write_constraint_error", error=str(exc), messages=len(batch))
+                raise
+            except Exception as exc:
+                self._health.mark_db_failed(str(exc))
+                self._rewind(batch)
+                log.exception("batch_write_fatal_error", error=str(exc), messages=len(batch))
+                raise
+            else:
+                return result.total
+        self._rewind(batch)
+        return None
 
     def _rewind(self, batch: list[Message]) -> None:
         """
@@ -320,11 +384,14 @@ class Worker:
 
     def _shutdown(self) -> None:
         log.info("consumer_stopping")
-        self._health.ready = False
+        self._health.set_stopping()
         try:
             self._consumer.close()
         finally:
-            self._db.close()
+            try:
+                self._dlq.close()
+            finally:
+                self._db.close()
 
 
 def main() -> None:
@@ -332,12 +399,16 @@ def main() -> None:
     cfg = Config.from_env()
     health = HealthState()
 
-    start_health_server(cfg.health_port, health)
+    server = start_health_server(cfg.health_port, health)
 
     worker = Worker(cfg, health)
     signal.signal(signal.SIGINT, worker.stop)
     signal.signal(signal.SIGTERM, worker.stop)
-    worker.run()
+    try:
+        worker.run()
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 if __name__ == "__main__":

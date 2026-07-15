@@ -68,7 +68,7 @@ upsert и мягким удалением.
 ├── Makefile                  # sync-full, sync-incremental, up, down, logs, psql
 ├── .env.example
 ├── migrations/               # SQL-миграции (нумерованные)
-│   ├── 0001_init.sql
+│   ├── V1__init.sql
 │   └── ...
 ├── sql/                      # проверочные запросы для демо
 ├── docs/                     # архитектура, формат событий, решения, ограничения
@@ -336,6 +336,14 @@ consumer restarts=0, DLQ пуст.
 - Проверено в `quality-culture`: Ruff/ty/prek clean, unit `14 + 18`, live 1С
   `4 passed`, чистый Compose mock smoke passed, production targets собираются и
   работают non-root без dev-зависимостей, consumer lag `0`, DLQ `0`.
+- В ветке `audit-fixes` закрыты конкретные замечания аудита: обязательный
+  timezone-aware `updated_at`, строгая ENV-валидация, prod Compose + test overlay,
+  PowerShell без `Invoke-Expression`, Flyway history/checksum, реальные SQL-тесты,
+  прерываемый shutdown, безопасная политика DB retry, thread-safe health,
+  `/livez`/`/readyz`/`/metrics`, атомарный mock-state и dependency audit.
+- Проверено в `audit-fixes`: unit `34 + 35`, PostgreSQL integration `3 passed`,
+  live 1С `4 passed`, чистый prod Compose mock smoke passed, Flyway baseline/V1
+  passed на существующем volume, оба runtime-контейнера UID `999`, DLQ `0`.
 
 ---
 

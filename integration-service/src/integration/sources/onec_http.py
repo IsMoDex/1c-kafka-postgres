@@ -57,8 +57,6 @@ class OneCHttpSource(Source):
         for attempt in range(self._retries + 1):
             try:
                 resp = self._client.get(path, params=params)
-                if resp.status_code == HTTP_TOO_MANY_REQUESTS or resp.status_code >= HTTP_SERVER_ERROR:
-                    resp.raise_for_status()
                 resp.raise_for_status()
                 data = resp.json()
             except (httpx.TransportError, httpx.HTTPStatusError) as exc:

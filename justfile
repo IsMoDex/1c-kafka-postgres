@@ -25,17 +25,18 @@ sync-incremental:
     docker compose exec integration-service python -m integration sync incremental
 
 verify:
-    ./make.ps1 verify
+    docker compose cp sql/verify.sql postgres:/tmp/verify.sql
+    docker compose exec -T postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /tmp/verify.sql'
 
 health:
-    ./make.ps1 health
+    docker compose exec -T integration-service python -c "import httpx; r=httpx.get('http://consumer-service:8081/readyz', timeout=5); r.raise_for_status(); print(r.text)"
 
 test:
     uv run --directory integration-service pytest -q -m "not integration"
-    uv run --directory consumer-service pytest -q
+    uv run --directory consumer-service pytest -q -m "not postgres"
 
 test-integration:
-    docker compose exec integration-service python -m pytest -q -m integration
+    docker compose -f compose.yaml -f compose.test.yaml run --build --rm --no-deps --entrypoint python integration-service -m pytest -q -m integration
 
 format:
     uv run --project integration-service ruff format integration-service

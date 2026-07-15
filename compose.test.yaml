@@ -1,0 +1,10 @@
+services:
+  consumer-service:
+    image: 1c-kafka-postgres-consumer-service:test
+    build:
+      target: test
+
+  integration-service:
+    image: 1c-kafka-postgres-integration-service:test
+    build:
+      target: test

@@ -59,7 +59,7 @@ jobs:
           - service: integration-service
             command: python -m pytest -q -m "not integration"
           - service: consumer-service
-            command: python -m pytest -q
+            command: python -m pytest -q -m "not postgres"
     defaults:
       run:
         working-directory: ${{ matrix.service }}
@@ -78,6 +78,82 @@ jobs:
 
       - name: Run tests
         run: uv run ${{ matrix.command }}
+
+  postgres-integration:
+    name: PostgreSQL integration
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: integration
+          POSTGRES_PASSWORD: integration
+          POSTGRES_DB: integration_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U integration -d integration_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_PG_DSN: postgresql://integration:integration@localhost:5432/integration_test
+    defaults:
+      run:
+        working-directory: consumer-service
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.17"
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --locked
+
+      - name: Apply database schema
+        run: >-
+          uv run python -c
+          "import os,pathlib,psycopg;
+          c=psycopg.connect(os.environ['TEST_PG_DSN']);
+          c.execute(pathlib.Path('../migrations/V1__init.sql').read_text(encoding='utf-8'));
+          c.commit();c.close()"
+
+      - name: Run PostgreSQL integration tests
+        run: uv run pytest -q -m postgres
+
+  dependency-audit:
+    name: Dependency audit (${{ matrix.service }})
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [integration-service, consumer-service]
+    defaults:
+      run:
+        working-directory: ${{ matrix.service }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.17"
+          enable-cache: true
+
+      - name: Export locked production dependencies
+        run: uv export --frozen --no-dev --no-emit-project --format requirements-txt -o requirements-audit.txt
+
+      - name: Audit known vulnerabilities
+        run: uvx --from pip-audit==2.9.0 pip-audit -r requirements-audit.txt
 
   production-images:
     name: Production image (${{ matrix.service }})
@@ -101,12 +177,23 @@ jobs:
           context: ./${{ matrix.service }}
           target: prod
           push: false
+          load: true
+          tags: local/${{ matrix.service }}:ci
           cache-from: type=gha,scope=${{ matrix.service }}-prod
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}-prod
 
+      - name: Scan production image
+        run: >-
+          docker run --rm
+          -v /var/run/docker.sock:/var/run/docker.sock
+          -v trivy-cache-${{ matrix.service }}:/root/.cache
+          aquasec/trivy@sha256:6fb0646988fcd2fdf7bf123f7174945ebc2c9c72d1fa1567c8d7daeeb70f8037
+          image --scanners vuln --skip-version-check --exit-code 1 --ignore-unfixed
+          --severity HIGH,CRITICAL local/${{ matrix.service }}:ci
+
   compose-integration:
     name: Compose integration
-    needs: [unit-tests, production-images]
+    needs: [unit-tests, postgres-integration, dependency-audit, production-images]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:

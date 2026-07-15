@@ -59,20 +59,20 @@ psql: ## Открыть psql в контейнере postgres
 	$(COMPOSE) exec postgres sh -c "psql -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""
 
 verify: ## Показать содержимое таблиц (проверочные запросы)
-	$(COMPOSE) exec -T postgres sh -c "psql -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\" -f -" < sql/verify.sql
+	$(COMPOSE) exec -T postgres sh -c "psql -v ON_ERROR_STOP=1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\" -f -" < sql/verify.sql
 
-health: ## Проверить /health consumer-service
-	@curl -s http://localhost:8081/health || echo "consumer недоступен"
+health: ## Проверить readiness consumer-service
+	@curl -fsS http://localhost:8081/health
 
 onec-check: ## Проверить доступность HTTP-сервиса 1С из контейнера (ONEC_BASE_URL)
 	$(COMPOSE) exec integration-service python -c "import os,httpx; u=os.environ['ONEC_BASE_URL']; r=httpx.get(u+'/ownership-forms',timeout=30); print('URL:',u); print('HTTP',r.status_code); print(r.text[:200])"
 
 test: ## Запустить unit/component тесты сервисов (без живого контура)
-	$(COMPOSE) exec integration-service python -m pytest -q -m "not integration"
-	$(COMPOSE) exec consumer-service python -m pytest -q
+	uv run --directory integration-service pytest -q -m "not integration"
+	uv run --directory consumer-service pytest -q -m "not postgres"
 
 test-integration: ## Проверить живой контур 1С → Kafka → consumer → PostgreSQL
-	$(COMPOSE) exec integration-service python -m pytest -q -m integration
+	docker compose -f compose.yaml -f compose.test.yaml run --build --rm --no-deps --entrypoint python integration-service -m pytest -q -m integration
 
 # ── Очистка ──────────────────────────────────────────────────────────────────
 clean: ## Остановить и удалить контейнеры + сети

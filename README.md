@@ -56,7 +56,7 @@ make sync-full                 # mock → Kafka → PostgreSQL
 make verify
 ```
 
-Kafka UI: <http://localhost:8080> · Consumer health: <http://localhost:8081/health>
+Kafka UI: <http://localhost:8080> · Readiness: <http://localhost:8081/readyz> · Liveness: <http://localhost:8081/livez>
 
 > На Windows без `make` используйте `./make.ps1 <команда>` — см. [раздел ниже](#запуск-на-windows).
 
@@ -131,7 +131,7 @@ FK_BARRIER_TIMEOUT=30
 **Контрагенты** (`counterparties`): `id` (GUID), `code`, `name`, `inn`, `kpp`,
 `ownership_form_id` (FK → формы), `deleted`, `updated_at`.
 
-Схема БД — в [`migrations/0001_init.sql`](migrations/0001_init.sql). Демо-данные
+Схема БД — в [`migrations/V1__init.sql`](migrations/V1__init.sql). Демо-данные
 mock: 4 формы собственности, 5 контрагентов.
 
 ---
@@ -388,21 +388,22 @@ just quality
 ```
 
 Она включает Ruff formatter, строгий Ruff lint (`select = ["ALL"]`), `ty`,
-проверку lock-файлов и 32 unit/component теста. Pre-commit hooks запускаются
+проверку lock-файлов и 69 unit/component тестов. Отдельный CI job выполняет
+3 транзакционных теста на реальном PostgreSQL. Pre-commit hooks запускаются
 через `prek run --all-files`. Установка инструментов и отдельные команды описаны
 в [`docs/development.md`](docs/development.md).
 
 Dockerfile обоих сервисов используют multi-stage build:
 
-- `test` — локальный Compose-контур с pytest;
-- `prod` — минимальный non-root runtime без тестов, Ruff, ty и uv.
+- `test` — dev-зависимости и pytest, только через `compose.test.yaml`;
+- `prod` — основной Compose runtime: non-root, без тестов, Ruff, ty и uv.
 
 ---
 
 ## GitHub Actions
 
 `.github/workflows/ci.yml` автоматически запускает форматирование, Ruff, ty,
-unit-тесты обоих сервисов, сборку production-образов и Docker Compose integration
+unit-тесты обоих сервисов, реальные PostgreSQL-тесты, сборку production-образов и Docker Compose integration
 smoke для push в `main` и pull request. Стандартный CI использует
 `SOURCE_TYPE=mock`, но остальные компоненты настоящие: Kafka, PostgreSQL,
 integration-service и consumer-service.
@@ -465,7 +466,7 @@ Copy-Item .env.example .env   # SOURCE_TYPE=mock по умолчанию
 ├── justfile                # quality и developer-команды
 ├── prek.toml               # pre-commit hooks
 ├── .env.example
-├── migrations/             # SQL-схема (0001_init.sql)
+├── migrations/             # Flyway SQL-схема (V1__init.sql)
 ├── sql/                    # проверочные запросы (verify.sql)
 ├── docs/                   # architecture, event-format, decisions, limitations
 ├── integration-service/    # producer (Python)

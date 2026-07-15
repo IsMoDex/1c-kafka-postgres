@@ -9,10 +9,14 @@ request и вручную через `workflow_dispatch`.
 
 1. `Quality (integration-service)` — Ruff format, Ruff lint и ty.
 2. `Quality (consumer-service)` — Ruff format, Ruff lint и ty.
-3. `Unit tests (integration-service)` — 14 unit/component тестов producer-а.
-4. `Unit tests (consumer-service)` — 18 unit/component тестов consumer-а.
-5. `Production image (*)` — сборка чистого multi-stage target `prod`.
-6. `Compose integration` — настоящий Docker Compose контур с Kafka,
+3. `Unit tests (integration-service)` — 34 unit/component теста producer-а.
+4. `Unit tests (consumer-service)` — 35 unit/component тестов consumer-а.
+5. `PostgreSQL integration` — транзакционный upsert, stale/equal timestamp,
+   rollback FK batch и reconnect на реальном PostgreSQL 16.
+6. `Dependency audit (*)` — `pip-audit` по locked production dependencies.
+7. `Production image (*)` — сборка чистого multi-stage target `prod` и Trivy
+   scan исправимых HIGH/CRITICAL уязвимостей.
+8. `Compose integration` — настоящий Docker Compose prod-контур с Kafka,
    PostgreSQL, integration-service и consumer-service. В GitHub-hosted runner
    используется воспроизводимый `SOURCE_TYPE=mock`, потому что 1С нельзя
    установить на стандартный Ubuntu runner.
@@ -29,6 +33,10 @@ docker compose down -v --remove-orphans
 
 Workflow имеет минимальные права `contents: read`, отменяет устаревшие запуски
 той же ветки через `concurrency` и всегда удаляет compose volumes после теста.
+
+Отдельный `security.yml` проверяет полную Git-историю через Gitleaks и выполняет
+CodeQL-анализ Python. Dependabot еженедельно проверяет uv/Python dependencies и
+GitHub Actions. Все внешние actions закреплены полными commit SHA.
 
 ## GitHub Container Registry
 
@@ -88,6 +96,9 @@ Live tests временно меняют имя контрагента `000001`,
 
 - `Unit tests (integration-service)`;
 - `Unit tests (consumer-service)`;
+- `PostgreSQL integration`;
+- `Dependency audit (integration-service)`;
+- `Dependency audit (consumer-service)`;
 - `Quality (integration-service)`;
 - `Quality (consumer-service)`;
 - `Production image (integration-service)`;

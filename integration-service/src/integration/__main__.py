@@ -42,14 +42,6 @@ def _build_source(cfg: Config) -> Source:
         log.info("source_selected", type="mock")
         return MockSource()
     if cfg.source_type == "onec":
-        if "HOST_IPV4_NOT_SET" in cfg.onec_base_url or "<HOST_IPV4>" in cfg.onec_base_url:
-            message = (
-                "Для SOURCE_TYPE=onec замените placeholder в ONEC_BASE_URL. "
-                "Используйте http://host.docker.internal/roshim/hs/integration; "
-                "если Docker Desktop возвращает 502, укажите реальный IPv4 хоста, "
-                "например http://172.23.128.1/roshim/hs/integration."
-            )
-            raise typer.BadParameter(message)
         log.info("source_selected", type="onec", base_url=cfg.onec_base_url)
         return OneCHttpSource(
             base_url=cfg.onec_base_url,
@@ -60,7 +52,7 @@ def _build_source(cfg: Config) -> Source:
             retries=cfg.onec_http_retries,
             page_size=cfg.onec_page_size,
         )
-    message = f"Неизвестный SOURCE_TYPE={cfg.source_type!r} (ожидается mock|onec)"
+    message = f"Unsupported SOURCE_TYPE={cfg.source_type!r}"
     raise typer.BadParameter(message)
 
 
@@ -71,9 +63,9 @@ def _run(mode: str) -> None:
         Synchronizer(cfg, source).run(mode)
     except Exception as exc:
         log.exception("sync_error", mode=mode, error=str(exc))
-        source.close()
         raise typer.Exit(code=1) from None
-    source.close()
+    finally:
+        source.close()
 
 
 @sync_app.command("full")
@@ -96,7 +88,10 @@ def demo_touch(
     """Изменить контрагента в mock-источнике (обновляет updated_at)."""
     src = MockSource()
     changes = {"name": name} if name else {}
-    src.touch_counterparty(cp_id, **changes)
+    try:
+        src.touch_counterparty(cp_id, **changes)
+    except LookupError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     log.info("demo_touch", id=cp_id, changes=changes)
 
 
@@ -104,7 +99,10 @@ def demo_touch(
 def demo_delete(cp_id: str = typer.Argument(..., help="GUID контрагента")) -> None:
     """Пометить контрагента удалённым (deleted=true) в mock-источнике."""
     src = MockSource()
-    src.soft_delete_counterparty(cp_id)
+    try:
+        src.soft_delete_counterparty(cp_id)
+    except LookupError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     log.info("demo_delete", id=cp_id)
 
 

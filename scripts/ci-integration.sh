@@ -32,7 +32,7 @@ wait_for_health() {
   # coordinator on slower CI runners.
   for _ in $(seq 1 90); do
     if docker compose exec -T integration-service python -c \
-      'import httpx; r=httpx.get("http://consumer-service:8081/health", timeout=5); r.raise_for_status(); p=r.json(); assert p["ready"] and p["db_ok"] and p["kafka_ok"] and p["messages_dlq"] == 0' \
+      'import httpx; r=httpx.get("http://consumer-service:8081/readyz", timeout=5); r.raise_for_status(); p=r.json(); assert p["ready"] and p["db_ok"] and p["kafka_ok"] and p["messages_dlq"] == 0' \
       >/dev/null 2>&1; then
       return 0
     fi

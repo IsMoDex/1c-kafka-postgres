@@ -40,6 +40,13 @@
 11. **Timestamp-инкремент.** Для защиты секундной точности используется overlap
     в одну секунду и идемпотентный upsert. При ручном переводе часов 1С назад
     нужен сброс watermark или full sync; промышленный вариант — план обмена.
+12. **Offset pagination 1С.** HTTP-сервис использует стабильную сортировку и
+    `limit/offset`, но изменение набора между страницами не даёт snapshot isolation.
+    Overlap и идемпотентность снижают риск для incremental; для больших нагрузок
+    нужен cursor `(ДатаИзменения, Ссылка)` или snapshot token на стороне 1С.
+13. **Compose — production-like, не production deployment.** Основной файл
+    запускает non-root `prod`-образы и Flyway, но Kafka остаётся одноузловой и
+    использует PLAINTEXT. Test stages подключаются только через `compose.test.yaml`.
 
 ## Что улучшил бы в промышленной версии
 
@@ -51,11 +58,13 @@
 - **Kafka-кластер** (3+ брокера, replication factor 3, min.insync.replicas=2).
 - **Безопасность**: TLS + SASL/SCRAM для Kafka, TLS для PostgreSQL, секреты в
   Vault/Secret Manager, OAuth для HTTP-сервиса 1С.
-- **Наблюдаемость**: Prometheus-метрики (lag consumer group, throughput, DLQ rate),
-  трейсинг (OpenTelemetry), алертинг.
+- **Наблюдаемость**: `/metrics` уже отдаёт readiness, throughput, retries и DLQ;
+  промышленному контуру нужны consumer lag по partition, histogram latency,
+  OpenTelemetry и алертинг.
 - **Мониторинг DLQ** и автоматизированный re-drive (переобработка).
-- **Миграции** через инструмент (Flyway/Alembic/sqitch) с версионированием.
+- **Миграции** выполняются Flyway с историей и checksum; для промышленной среды
+  нужно отключить переходный `baselineOnMigrate` после обновления старых volumes.
 - **CDC**: при больших объёмах — Debezium от журнала 1С/СУБД вместо poll-синхронизации.
 - **Backfill/replay**: возможность перечитать топики с нуля для восстановления БД.
-- **Тесты**: контрактные тесты HTTP-сервиса 1С, интеграционные тесты consumer с
-  testcontainers, нагрузочные тесты.
+- **Тесты**: есть реальные PostgreSQL integration tests; дополнительно нужны
+  нагрузочные тесты и mutation/snapshot тест keyset-пагинации 1С.

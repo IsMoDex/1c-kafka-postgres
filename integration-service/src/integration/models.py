@@ -11,7 +11,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field
 
 
 def _utcnow() -> datetime:
@@ -28,7 +28,7 @@ class OwnershipForm(BaseModel):
     code: str | None = None
     name: str
     deleted: bool = False
-    updated_at: datetime | None = None
+    updated_at: AwareDatetime
 
 
 class Counterparty(BaseModel):
@@ -41,7 +41,7 @@ class Counterparty(BaseModel):
     kpp: str | None = None
     ownership_form_id: str | None = None
     deleted: bool = False
-    updated_at: datetime | None = None
+    updated_at: AwareDatetime
 
 
 # ── Событийный конверт (envelope) ────────────────────────────────────────────
@@ -60,7 +60,7 @@ class Event(BaseModel):
     event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     event_type: EventType
     source: str = "1c"
-    occurred_at: datetime = Field(default_factory=_utcnow)
+    occurred_at: AwareDatetime = Field(default_factory=_utcnow)
     payload: dict
 
     def key(self) -> str:

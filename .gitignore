@@ -54,11 +54,14 @@
 !/.gitignore
 !/AGENTS.md
 !/compose.yaml
+!/compose.test.yaml
 !/justfile
 !/Makefile
 !/make.ps1
 !/prek.toml
 !/README.md
+!/CHANGELOG.md
+!/SECURITY.md
 
 # Generated and local files inside allowed directories.
 .env

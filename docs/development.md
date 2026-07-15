@@ -66,7 +66,7 @@ Ruff включает `select = ["ALL"]`. Исключены только кон
 
 ```text
 build -> locked production dependencies
-test  -> dev dependencies and tests (used by compose.yaml)
+test  -> dev dependencies and tests (only through compose.test.yaml)
 prod  -> non-root runtime without build and test tools
 ```
 
@@ -76,6 +76,17 @@ prod  -> non-root runtime without build and test tools
 docker build --target prod -t integration-service:prod ./integration-service
 docker build --target prod -t consumer-service:prod ./consumer-service
 ```
+
+Основной `compose.yaml` всегда использует `prod`. Тестовый image не перезаписывает
+локальный prod tag:
+
+```bash
+docker compose -f compose.yaml -f compose.test.yaml build
+```
+
+Миграции именуются `V<version>__<description>.sql` и применяются Flyway. Уже
+применённую миграцию изменять нельзя: checksum validation завершит startup ошибкой;
+любое изменение схемы добавляется новой версией.
 
 ## Ignore policy
 
