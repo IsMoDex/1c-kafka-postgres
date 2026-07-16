@@ -259,6 +259,15 @@ def test_incremental_update_propagates_and_restores(
     onec_client: httpx.Client,
 ) -> None:
     _sync(config, "full")
+    full_offsets = _watermarks(config, TOPICS)
+    _wait_for_main_consumer(config, full_offsets)
+
+    no_change_result = _sync(config, "incremental")
+    no_change_offsets = _watermarks(config, TOPICS)
+    assert no_change_result["ownership_forms"] == 0
+    assert no_change_result["counterparties"] == 0
+    assert no_change_offsets == full_offsets
+
     rows = onec_client.get("/counterparties", params={"limit": 500, "offset": 0}).json()
     target = next(row for row in rows if row["code"] == "000001")
     original_name = target["name"]
@@ -267,16 +276,21 @@ def test_incremental_update_propagates_and_restores(
     try:
         response = onec_client.post("/touch", params={"id": target["id"], "name": changed_name})
         assert response.status_code == 200
+        kafka_before = _watermarks(config, TOPICS)
         result = _sync(config, "incremental")
-        offsets = _watermarks(config, TOPICS)
-        _wait_for_main_consumer(config, offsets)
+        kafka_after = _watermarks(config, TOPICS)
+        _wait_for_main_consumer(config, kafka_after)
         _wait_until(
             lambda: (
                 _fetchone(config, "SELECT name FROM counterparties WHERE id = %s", (target["id"],))[0] == changed_name
             ),
             "incremental update did not reach PostgreSQL",
         )
-        assert result["counterparties"] >= 1
+        assert result["ownership_forms"] == 0
+        assert result["counterparties"] == 1
+        assert sum(kafka_after[key] - value for key, value in kafka_before.items()) == 1
+        events = _read_range(config, kafka_before, kafka_after)
+        assert [event["payload"]["id"] for event in events] == [target["id"]]
         assert _fetchone(config, "SELECT count(*) FROM counterparties WHERE id = %s", (target["id"],))[0] == 1
     finally:
         restore = onec_client.post("/touch", params={"id": target["id"], "name": original_name})
@@ -314,14 +328,17 @@ def test_soft_delete_health_and_dlq(
     try:
         response = onec_client.post("/delete", params={"id": target["id"]})
         assert response.status_code == 200
+        kafka_before = _watermarks(config, TOPICS)
         result = _sync(config, "incremental")
-        offsets = _watermarks(config, TOPICS)
-        _wait_for_main_consumer(config, offsets)
+        kafka_after = _watermarks(config, TOPICS)
+        _wait_for_main_consumer(config, kafka_after)
         _wait_until(
             lambda: _fetchone(config, "SELECT deleted FROM counterparties WHERE id = %s", (target["id"],))[0] is True,
             "soft delete did not reach PostgreSQL",
         )
-        assert result["counterparties"] >= 1
+        assert result["ownership_forms"] == 0
+        assert result["counterparties"] == 1
+        assert sum(kafka_after[key] - value for key, value in kafka_before.items()) == 1
         assert _watermarks(config, DLQ_TOPICS) == dlq_before
     finally:
         restore = onec_client.post("/seed")

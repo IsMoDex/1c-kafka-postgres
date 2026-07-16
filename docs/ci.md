@@ -9,7 +9,7 @@ request и вручную через `workflow_dispatch`.
 
 1. `Quality (integration-service)` — Ruff format, Ruff lint и ty.
 2. `Quality (consumer-service)` — Ruff format, Ruff lint и ty.
-3. `Unit tests (integration-service)` — 34 unit/component теста producer-а.
+3. `Unit tests (integration-service)` — 36 unit/component тестов producer-а.
 4. `Unit tests (consumer-service)` — 35 unit/component тестов consumer-а.
 5. `PostgreSQL integration` — транзакционный upsert, stale/equal timestamp,
    rollback FK batch и reconnect на реальном PostgreSQL 16.

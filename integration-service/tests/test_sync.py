@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, cast
 
 from integration.models import Counterparty, OwnershipForm
 from integration.sync import Synchronizer
+from integration.sync_state import SyncState
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -18,7 +19,6 @@ if TYPE_CHECKING:
     from integration.models import Event
     from integration.producer import EventProducer
     from integration.sources.base import Source
-    from integration.sync_state import SyncState
 
 TS_FORM = datetime(2026, 7, 14, 10, 0, 0, tzinfo=UTC)
 TS_CP = datetime(2026, 7, 14, 10, 0, 1, tzinfo=UTC)
@@ -60,9 +60,15 @@ class FakeProducer:
 
 
 class FakeState:
-    def __init__(self, calls: list[str], values: dict[str, datetime] | None = None) -> None:
+    def __init__(
+        self,
+        calls: list[str],
+        values: dict[str, datetime] | None = None,
+        unchanged_ids: AbstractSet[str] | None = None,
+    ) -> None:
         self.calls = calls
         self.values = values or {}
+        self.unchanged_ids = unchanged_ids or set()
         self.set_calls: list[tuple[str, datetime, bool]] = []
 
     @contextmanager
@@ -75,6 +81,14 @@ class FakeState:
 
     def set(self, entity: str, value: datetime, *, monotonic: bool = True) -> None:
         self.set_calls.append((entity, value, monotonic))
+
+    def changed_ownership_forms(self, records: list[OwnershipForm]) -> list[OwnershipForm]:
+        self.calls.append("filter_forms")
+        return [record for record in records if record.id not in self.unchanged_ids]
+
+    def changed_counterparties(self, records: list[Counterparty]) -> list[Counterparty]:
+        self.calls.append("filter_counterparties")
+        return [record for record in records if record.id not in self.unchanged_ids]
 
     def wait_for_ownership_forms(self, ids: AbstractSet[str], _timeout: float) -> None:
         self.calls.append(f"barrier:{','.join(sorted(ids))}")
@@ -139,3 +153,46 @@ def test_incremental_uses_one_second_overlap() -> None:
     assert form_since.timestamp() == TS_FORM.timestamp() - 1
     assert cp_since.timestamp() == TS_CP.timestamp() - 1
     assert state.set_calls == []
+
+
+def test_incremental_filters_unchanged_overlap_records_before_kafka() -> None:
+    calls: list[str] = []
+    form = OwnershipForm(id="ooo", name="ООО", deleted=False, updated_at=TS_FORM)
+    unchanged_cp = Counterparty(
+        id="00000000-0000-0000-0000-000000000001",
+        name="Без изменений",
+        ownership_form_id="ooo",
+        deleted=False,
+        updated_at=TS_CP,
+    )
+    changed_cp = unchanged_cp.model_copy(update={"id": "00000000-0000-0000-0000-000000000002", "name": "Изменено"})
+    source = FakeSource(calls, [form], [unchanged_cp, changed_cp])
+    state = FakeState(
+        calls,
+        {"ownership_forms": TS_FORM, "counterparties": TS_CP},
+        unchanged_ids={form.id, unchanged_cp.id},
+    )
+
+    result = _synchronizer(source, FakeProducer(calls), state).run("incremental")
+
+    assert "publish:forms:ooo" not in calls
+    assert "publish:counterparties:00000000-0000-0000-0000-000000000001" not in calls
+    assert "publish:counterparties:00000000-0000-0000-0000-000000000002" in calls
+    assert result["ownership_forms"] == 0
+    assert result["counterparties"] == 1
+    assert result["ownership_forms_fetched"] == 1
+    assert result["counterparties_fetched"] == 2
+    assert state.set_calls == [
+        ("ownership_forms", TS_FORM, True),
+        ("counterparties", TS_CP, True),
+    ]
+
+
+def test_overlap_comparison_publishes_only_new_or_changed_state() -> None:
+    newer = datetime(2026, 7, 14, 10, 0, 2, tzinfo=UTC)
+
+    assert SyncState._needs_publish(None, ("name", TS_CP)) is True
+    assert SyncState._needs_publish(("name", TS_CP), ("name", TS_CP)) is False
+    assert SyncState._needs_publish(("old", TS_CP), ("new", TS_CP)) is True
+    assert SyncState._needs_publish(("new", newer), ("old", TS_CP)) is False
+    assert SyncState._needs_publish(("same", TS_CP), ("same", newer)) is True

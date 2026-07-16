@@ -192,10 +192,11 @@ docker compose exec integration-service python -m integration sync incremental
 ```
 
 Механизм: из `sync_state` берётся `last_synced_at`; запрос использует секундный
-overlap, поэтому граничные записи безопасно приходят повторно. После успешной
-публикации watermark устанавливается по максимальному `updated_at` самого
-источника, а не по часам контейнера. Full sync также инициализирует watermark.
-Запуски сериализуются advisory lock в PostgreSQL.
+overlap, поэтому граничные записи безопасно приходят из 1С повторно. Перед Kafka
+они сравниваются с уже применённым состоянием PostgreSQL, и неизменённые записи
+отбрасываются. После успешной публикации watermark устанавливается по
+максимальному `updated_at` самого источника, а не по часам контейнера. Full sync
+также инициализирует watermark. Запуски сериализуются advisory lock в PostgreSQL.
 
 Формы публикуются и flush-ятся первыми. Перед публикацией контрагентов producer
 ждёт, пока consumer применит все требуемые формы в PostgreSQL. Это устраняет
@@ -403,7 +404,7 @@ just quality
 ```
 
 Она включает Ruff formatter, строгий Ruff lint (`select = ["ALL"]`), `ty`,
-проверку lock-файлов и 69 unit/component тестов. Отдельный CI job выполняет
+проверку lock-файлов и 71 unit/component тест. Отдельный CI job выполняет
 3 транзакционных теста на реальном PostgreSQL. Pre-commit hooks запускаются
 через `prek run --all-files`. Установка инструментов и отдельные команды описаны
 в [`docs/development.md`](docs/development.md).

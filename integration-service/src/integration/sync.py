@@ -61,7 +61,8 @@ class Synchronizer:
         log.info("sync_start", mode=mode, of_since=_iso(of_since), cp_since=_iso(cp_since))
 
         # 1) формы собственности — первыми (FK)
-        forms = self._source.fetch_ownership_forms(of_since)
+        fetched_forms = self._source.fetch_ownership_forms(of_since)
+        forms = self._changed_ownership_forms(fetched_forms, mode)
         for form in forms:
             self._producer.publish(self._cfg.topic_ownership_forms, _ownership_event(form))
 
@@ -72,7 +73,8 @@ class Synchronizer:
             raise RuntimeError(message)
 
         # 2) контрагенты
-        counterparties = self._source.fetch_counterparties(cp_since)
+        fetched_counterparties = self._source.fetch_counterparties(cp_since)
+        counterparties = self._changed_counterparties(fetched_counterparties, mode)
 
         # Kafka не гарантирует порядок между топиками. До публикации зависимых
         # записей ждём, пока consumer фактически применит требуемые формы в PG.
@@ -90,13 +92,15 @@ class Synchronizer:
 
         # Watermark берём из часов источника, а не integration-service. Overlap
         # в _since защищает записи с одинаковой секундой ДатаИзменения.
-        self._advance_state("ownership_forms", forms, mode)
-        self._advance_state("counterparties", counterparties, mode)
+        self._advance_state("ownership_forms", fetched_forms, mode)
+        self._advance_state("counterparties", fetched_counterparties, mode)
 
         result = {
             "mode": mode,
             "ownership_forms": len(forms),
             "counterparties": len(counterparties),
+            "ownership_forms_fetched": len(fetched_forms),
+            "counterparties_fetched": len(fetched_counterparties),
             "run_started_at": _iso(run_started_at),
         }
         log.info("sync_done", **result)
@@ -107,6 +111,12 @@ class Synchronizer:
             return None
         value = self._state.get(entity)
         return value - timedelta(seconds=1) if value else None
+
+    def _changed_ownership_forms(self, records: list[OwnershipForm], mode: str) -> list[OwnershipForm]:
+        return self._state.changed_ownership_forms(records) if mode == "incremental" else records
+
+    def _changed_counterparties(self, records: list[Counterparty], mode: str) -> list[Counterparty]:
+        return self._state.changed_counterparties(records) if mode == "incremental" else records
 
     def _advance_state(
         self,

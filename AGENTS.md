@@ -344,6 +344,10 @@ consumer restarts=0, DLQ пуст.
 - Проверено в `audit-fixes`: unit `34 + 35`, PostgreSQL integration `3 passed`,
   live 1С `4 passed`, чистый prod Compose mock smoke passed, Flyway baseline/V1
   passed на существующем volume, оба runtime-контейнера UID `999`, DLQ `0`.
+- Incremental sync сохраняет секундный overlap при чтении из 1С, но сверяет
+  окно с применённым состоянием PostgreSQL и публикует в Kafka только реальные
+  изменения. Проверено: unit `36 + 35`, PostgreSQL integration `3 passed`,
+  live 1С `4 passed`; no-op incremental публикует `0`, одно изменение — `1` событие.
 
 ---
 
